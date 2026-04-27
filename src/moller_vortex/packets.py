@@ -9,7 +9,11 @@ import numpy as np
 from .accuracy import ACCURACY, NumericalAccuracy
 from .constants import ELECTRON_MASS, PI
 from .kinematics import energy, vec2, vec3
+import math
+import numpy as np
 
+from scipy.integrate import quad
+from scipy.special import kve
 
 @dataclass(frozen=True)
 class LGPacket:
@@ -47,36 +51,39 @@ def normalization_constant(
 ) -> float:
     """Compute the on-axis relativistic normalization constant N_ell.
 
-    The implementation uses a stable form of the product
+    Stable form for narrow packets.
 
-        exp(2*m**2/sigma_par**2) * K_0(2*m*sqrt(m**2+k_perp**2)/sigma_par**2).
+    The integration variable is
 
-    This avoids overflow for narrow packets.
+        y = k_perp / sigma_perp.
+
+    This avoids large powers of k_perp and keeps the radial integral in a
+    dimensionless variable.
     """
-    from scipy.integrate import quad
-    from scipy.special import kve
-
-    packet = packet.checked()
     accuracy = ACCURACY if accuracy is None else accuracy
+    packet = packet.checked()
 
     ell_abs = abs(packet.ell)
     sigma_perp = packet.sigma_perp
     sigma_par = packet.sigma_par
 
-    radial_alpha = 1.0 / sigma_perp ** 2 - 1.0 / sigma_par ** 2
+    radial_coeff = 1.0 - sigma_perp ** 2 / sigma_par ** 2
 
-    def integrand(k_perp: float) -> float:
-        eps_perp = np.sqrt(m * m + k_perp * k_perp)
+    def integrand(y: float) -> float:
+        k_perp = sigma_perp * y
+        eps_perp = np.hypot(m, k_perp)
+
+        eps_minus_m = k_perp * k_perp / (eps_perp + m)
         bessel_arg = 2.0 * m * eps_perp / sigma_par ** 2
 
-        stable_exponent = (
-            -radial_alpha * k_perp * k_perp
-            -2.0 * m * (eps_perp - m) / sigma_par ** 2
+        exponent = (
+            -radial_coeff * y * y
+            -2.0 * m * eps_minus_m / sigma_par ** 2
         )
 
         return (
-            k_perp ** (2 * ell_abs + 1)
-            * np.exp(stable_exponent)
+            y ** (2 * ell_abs + 1)
+            * np.exp(exponent)
             * kve(0, bessel_arg)
         )
 
@@ -89,30 +96,31 @@ def normalization_constant(
         limit=accuracy.quad_limit,
     )[0]
 
-    coefficient = 1.0 / (
-        4.0
-        * PI ** 2
-        * sigma_perp ** (2 * ell_abs)
-        * math.factorial(ell_abs)
+    norm_without_N = (
+        sigma_perp ** 2
+        * integral
+        / (
+            4.0
+            * PI ** 2
+            * math.factorial(ell_abs)
+        )
     )
 
-    return 1.0 / np.sqrt(coefficient * integral)
+    return 1.0 / np.sqrt(norm_without_N)
 
 
-def spherical_normalization_constant(packet: LGPacket, m: float = ELECTRON_MASS) -> float:
-    """Closed N_ell for sigma_perp = sigma_par.
-
-    Stable version using kve instead of kv.
-    """
-    from scipy.special import kve
-
+def spherical_normalization_constant(
+    packet: LGPacket,
+    m: float = ELECTRON_MASS,
+) -> float:
+    """Closed normalization constant in the spherical limit sigma_perp = sigma_par."""
     packet = packet.checked()
 
     if packet.sigma_perp != packet.sigma_par:
         raise ValueError("The spherical normalization formula requires sigma_perp = sigma_par.")
 
-    sigma = packet.sigma_perp
     ell_abs = abs(packet.ell)
+    sigma = packet.sigma_perp
     argument = 2.0 * m * m / sigma ** 2
 
     return (
