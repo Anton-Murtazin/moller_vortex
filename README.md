@@ -25,8 +25,6 @@ After installation, notebooks and scripts should import the project directly:
 import moller_vortex as mv
 ```
 
-No manual `sys.path` modification is required when the project is installed in the selected Python kernel.
-
 
 ## Main working file
 
@@ -123,15 +121,13 @@ src/moller_vortex/
   transverse.py    analytic and direct numerical transverse integrals
   smatrix.py       closed and numerically checked impulse S matrix
   checks.py        ordinary check functions for notebooks and scripts
+  probability.py   numerical integration of the squared module of S matrix related to the transverse total momentum
 
 notebooks/
   usage_example.ipynb
 
 analysis_workspace.ipynb  main Jupyter workspace for exploratory work
-analysis_workspace.py     optional plain-Python fallback
 ```
-
-The package `__init__.py` deliberately has no `__all__`; this is open research code intended for direct analysis and modification.
 
 ## Main documentation
 
