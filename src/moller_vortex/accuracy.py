@@ -16,7 +16,7 @@ class NumericalAccuracy:
 
     quad_epsabs: float = 1.0e-10
     quad_epsrel: float = 1.0e-10
-    quad_limit: int = 300
+    quad_limit: int = 30
     root_residual_atol: float = 1.0e-10
 
 
