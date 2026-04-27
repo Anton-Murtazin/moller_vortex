@@ -47,11 +47,14 @@ def normalization_constant(
 ) -> float:
     """Compute the on-axis relativistic normalization constant N_ell.
 
-    The one-dimensional integral is the result of analytically integrating the
-    original norm over azimuth and longitudinal momentum.
+    The implementation uses a stable form of the product
+
+        exp(2*m**2/sigma_par**2) * K_0(2*m*sqrt(m**2+k_perp**2)/sigma_par**2).
+
+    This avoids overflow for narrow packets.
     """
     from scipy.integrate import quad
-    from scipy.special import kv
+    from scipy.special import kve
 
     packet = packet.checked()
     accuracy = ACCURACY if accuracy is None else accuracy
@@ -59,14 +62,22 @@ def normalization_constant(
     ell_abs = abs(packet.ell)
     sigma_perp = packet.sigma_perp
     sigma_par = packet.sigma_par
+
     radial_alpha = 1.0 / sigma_perp ** 2 - 1.0 / sigma_par ** 2
 
     def integrand(k_perp: float) -> float:
-        bessel_arg = 2.0 * m * np.sqrt(m * m + k_perp * k_perp) / sigma_par ** 2
+        eps_perp = np.sqrt(m * m + k_perp * k_perp)
+        bessel_arg = 2.0 * m * eps_perp / sigma_par ** 2
+
+        stable_exponent = (
+            -radial_alpha * k_perp * k_perp
+            -2.0 * m * (eps_perp - m) / sigma_par ** 2
+        )
+
         return (
             k_perp ** (2 * ell_abs + 1)
-            * np.exp(-radial_alpha * k_perp * k_perp)
-            * kv(0, bessel_arg)
+            * np.exp(stable_exponent)
+            * kve(0, bessel_arg)
         )
 
     integral = quad(
@@ -78,17 +89,22 @@ def normalization_constant(
         limit=accuracy.quad_limit,
     )[0]
 
-    coefficient = (
-        np.exp(2.0 * m * m / sigma_par ** 2)
-        / (4.0 * PI ** 2 * sigma_perp ** (2 * ell_abs) * math.factorial(ell_abs))
+    coefficient = 1.0 / (
+        4.0
+        * PI ** 2
+        * sigma_perp ** (2 * ell_abs)
+        * math.factorial(ell_abs)
     )
 
     return 1.0 / np.sqrt(coefficient * integral)
 
 
 def spherical_normalization_constant(packet: LGPacket, m: float = ELECTRON_MASS) -> float:
-    """Closed N_ell for sigma_perp = sigma_par."""
-    from scipy.special import kv
+    """Closed N_ell for sigma_perp = sigma_par.
+
+    Stable version using kve instead of kv.
+    """
+    from scipy.special import kve
 
     packet = packet.checked()
 
@@ -102,8 +118,7 @@ def spherical_normalization_constant(packet: LGPacket, m: float = ELECTRON_MASS)
     return (
         2.0 ** 1.5
         * PI
-        * np.exp(-m * m / sigma ** 2)
-        / (sigma * np.sqrt(kv(ell_abs + 1, argument)))
+        / (sigma * np.sqrt(kve(ell_abs + 1, argument)))
     )
 
 
