@@ -1,139 +1,102 @@
-# Function guide for `moller_vortex`
+# Function Guide
 
-This file is a working guide to the main functions in the project. It is written for continuing analytic and numerical work, not as a restricted public API. The package namespace is intentionally open, so functions can be accessed either as
+This file is a practical guide to the `moller_vortex` project. It describes the main physical objects, numerical routines, units, and the intended workflow for using the code.
+
+The project is written as an editable Python package. In normal use, work from the project root and install it with
+
+```powershell
+python -m pip install -e ".[dev]"
+```
+
+Then import the package in notebooks or scripts as
 
 ```python
 import moller_vortex as mv
-
-packet = mv.LGPacket(...)
 ```
 
-or, in exploratory scripts,
-
-```python
-from moller_vortex import *
-
-packet = LGPacket(...)
-```
-
-The recommended style for longer work is `import moller_vortex as mv`, because it makes it clear which functions come from this project.
+Avoid `from moller_vortex import *` in notebooks. It can hide name conflicts and makes navigation in VS Code worse.
 
 ---
 
-## 1. Global conventions
+## 1. Units and conventions
 
-### Units
+The code uses relativistic natural units with
 
-The code uses natural units:
+\[
+c=1.
+\]
 
-$$
-\hbar=c=1.
-$$
+The numerical momentum and energy unit is MeV.
 
-Masses, energies and momenta are measured in MeV. Lengths and impact parameters are measured in MeV$^{-1}$.
+| Quantity | Code unit |
+|---|---:|
+| momentum \(k\), \(K\), \(\sigma\), \(m\), \(E\) | MeV |
+| coordinate-space impact parameter \(b\) | MeV\(^{-1}\) |
+| differential probability \(w(\mathbf K_\perp)=dP/d^2K_\perp\) | MeV\(^{-2}\) |
+| total probability \(P\) | dimensionless |
+| \(\langle K_x\rangle,\langle K_y\rangle\) | MeV |
 
-The electromagnetic coupling is defined in the Heaviside-Lorentz convention:
+If a paper gives transverse or longitudinal coordinate widths in nm, convert the corresponding momentum scale as
 
-$$
-e^2=4\pi\alpha.
-$$
+\[
+\sigma_p c = \frac{\hbar c}{\sigma_x}.
+\]
 
-The relevant constants live in `constants.py`:
-
-```python
-ELECTRON_MASS
-ALPHA_EM
-ELECTRON_CHARGE
-PI
-FLOAT_DTYPE
-COMPLEX_DTYPE
-```
-
-### Vectors
-
-The project uses ordinary NumPy arrays for vectors.
-
-A transverse vector has shape `(2,)`:
+In code units this is written as
 
 ```python
-K_perp = np.array([Kx, Ky])
+HBARC_MEV_NM = 1.973269804e-4
+sigma_p_mev = HBARC_MEV_NM / sigma_x_nm
 ```
 
-A three-momentum has shape `(3,)`:
+The impact parameter converts as
+
+\[
+b[\mathrm{MeV}^{-1}] = \frac{b[\mathrm{nm}]}{\hbar c[\mathrm{MeV\,nm}]}.
+\]
+
+In code:
 
 ```python
-k = np.array([kx, ky, kz])
+NM_TO_MEV_INV = 1.0 / HBARC_MEV_NM
+impact_b = np.array([b_x_nm * NM_TO_MEV_INV, b_y_nm * NM_TO_MEV_INV])
 ```
 
-The functions `vec2(...)` and `vec3(...)` check this at function boundaries. They are not physics functions; they only prevent accidental shape errors.
+The sign convention for the second packet follows the phase
 
-### Helicity labels
+\[
+\phi_2(\mathbf k_2)\propto \exp\{+i\mathbf b_\perp\cdot\mathbf k_{2\perp}\}.
+\]
 
-Helicities are represented as exact floating labels:
+Since
 
-```python
-+0.5
--0.5
-```
+\[
+\mathbf k_{2\perp}=\mathbf K_\perp-\mathbf k_{1\perp},
+\]
 
-The function `helicity(lam)` accepts only these two values. This is deliberate: helicity is a discrete label, not an approximate floating variable.
+this gives
+
+\[
+e^{+i\mathbf b_\perp\cdot\mathbf k_{2\perp}}
+=
+e^{+i\mathbf b_\perp\cdot\mathbf K_\perp}
+e^{-i\mathbf b_\perp\cdot\mathbf k_{1\perp}}.
+\]
+
+Therefore the transverse Gaussian source is
+
+\[
+\mathbf J_0=(\beta+\gamma)\mathbf K_\perp-i\mathbf b_\perp.
+\]
 
 ---
 
-## 2. Typical workflow
-
-A standard calculation has the following structure.
-
-```python
-import numpy as np
-import moller_vortex as mv
-
-packet1 = mv.LGPacket(
-    ell=1,
-    sigma_perp=0.18,
-    sigma_par=0.35,
-    kbar_z=20.0,
-)
-
-packet2 = mv.LGPacket(
-    ell=-1,
-    sigma_perp=0.18,
-    sigma_par=0.35,
-    kbar_z=-20.0,
-)
-
-N1 = mv.normalization_constant(packet1)
-N2 = mv.normalization_constant(packet2)
-
-k3 = np.array([0.8, 0.10, 19.7])
-k4 = np.array([-0.55, -0.08, -19.6])
-impact_b = np.array([0.3, 0.0])
-
-S = mv.S_impulse_closed_form(
-    k3,
-    k4,
-    packet1,
-    packet2,
-    lam1=0.5,
-    lam2=0.5,
-    lam3=0.5,
-    lam4=0.5,
-    impact_b=impact_b,
-    N1=N1,
-    N2=N2,
-)
-```
-
-For repeated scans, compute normalizations once when the packet parameters are fixed. Do not recompute `N1`, `N2` inside every call unless the packet parameters change.
-
----
-
-## 3. `accuracy.py`
+## 2. Accuracy configuration
 
 ### `NumericalAccuracy`
 
 ```python
-NumericalAccuracy(
+accuracy = mv.NumericalAccuracy(
     quad_epsabs=1.0e-10,
     quad_epsrel=1.0e-10,
     quad_limit=300,
@@ -141,949 +104,991 @@ NumericalAccuracy(
 )
 ```
 
-This dataclass stores the global numerical precision policy. `quad_epsabs`, `quad_epsrel`, and `quad_limit` are passed to SciPy adaptive quadratures. `root_residual_atol` is reserved for delta-reduced S-matrix routines where a candidate root is accepted only if the energy-conservation residual is small enough.
+This object stores global numerical accuracy parameters.
 
-Physical role: none. It only controls numerical accuracy.
-
-Use:
+Fields:
 
 ```python
-accuracy = NumericalAccuracy(
-    quad_epsabs=1e-11,
-    quad_epsrel=1e-11,
-    quad_limit=500,
-    root_residual_atol=1e-11,
-)
-N = normalization_constant(packet, accuracy=accuracy)
+quad_epsabs: float
+quad_epsrel: float
+quad_limit: int
+root_residual_atol: float
 ```
 
-### `ACCURACY`
+`quad_epsabs`, `quad_epsrel`, and `quad_limit` are used by one-dimensional adaptive integrations such as normalization integrals.
 
-Default instance of `NumericalAccuracy` used when no explicit accuracy object is provided.
+`root_residual_atol` is reserved for routines involving root validation in delta-reduced expressions.
+
+The package default is
+
+```python
+mv.ACCURACY
+```
+
+Use a separate variable name such as `acc` if you want to avoid conflict with the module name `moller_vortex.accuracy`.
 
 ---
 
-## 4. `kinematics.py`
-
-### `vec2(v)`
-
-```python
-vec2(v) -> np.ndarray
-```
-
-Checks that `v` is a transverse vector of shape `(2,)` and returns it as a `float64` NumPy array.
-
-Use it at boundaries, not repeatedly inside algebraic expressions.
-
-### `vec3(v)`
-
-```python
-vec3(v) -> np.ndarray
-```
-
-Checks that `v` is a three-vector of shape `(3,)` and returns it as a `float64` NumPy array.
-
-### `energy(k, m=ELECTRON_MASS)`
-
-Computes the on-shell energy:
-
-$$
-E_k=\sqrt{m^2+\mathbf k^2}.
-$$
-
-Input:
-
-```python
-k = np.array([kx, ky, kz])
-E = energy(k)
-```
-
-The function raises an error for negative mass.
-
-### `helicity(lam)`
-
-Validates a helicity label. It returns `lam` if `lam` is exactly `+0.5` or `-0.5`; otherwise it raises `ValueError`.
-
-### `kron_delta(a, b)`
-
-Discrete Kronecker delta:
-
-$$
-\delta_{ab}=\begin{cases}
-1, & a=b,\\
-0, & a\ne b.
-\end{cases}
-$$
-
-Used for helicity-conserving impulse amplitudes.
-
-### `relative_error(a, b)`
-
-Numerical relative error with `b` used as the reference value:
-
-$$
-\mathrm{err}(a,b)=\frac{|a-b|}{|b|}.
-$$
-
-If the reference value is exactly zero, the function returns `0.0` when `a=0` and `np.inf` otherwise. This keeps absolute and relative comparisons conceptually separate.
-
----
-
-## 5. `packets.py`
+## 3. Packet definition
 
 ### `LGPacket`
 
 ```python
-LGPacket(
-    ell: int,
-    sigma_perp: float,
-    sigma_par: float,
-    kbar_z: float,
+packet = mv.LGPacket(
+    ell=5,
+    sigma_perp=sigma_perp,
+    sigma_par=sigma_par,
+    kbar_z=10.0,
 )
 ```
 
-Container for one on-axis momentum-space Laguerre-Gaussian packet. The code assumes
-
-$$
-\bar{\mathbf k}_\perp=0.
-$$
+Represents an on-axis Laguerre-Gaussian-type momentum-space packet.
 
 Fields:
 
-- `ell`: integer orbital angular momentum charge;
-- `sigma_perp`: transverse momentum width;
-- `sigma_par`: longitudinal momentum width;
-- `kbar_z`: central longitudinal momentum.
+```python
+ell: int
+sigma_perp: float
+sigma_par: float
+kbar_z: float
+```
 
-The object does **not** store the normalization constant. This is intentional: for scans, the physical parameters and the normalization are kept explicit.
+Physical meaning:
 
-Validation rule:
+- `ell` is the OAM integer.
+- `sigma_perp` is the transverse momentum width in MeV.
+- `sigma_par` is the longitudinal momentum width in MeV.
+- `kbar_z` is the central longitudinal momentum in MeV.
 
-$$
-\sigma_\perp>0,
+The vortex phase convention is
+
+\[
+\ell>0:\quad k_\perp^{|\ell|}e^{+i\ell\phi}=k_+^\ell,
+\]
+
+\[
+\ell<0:\quad k_\perp^{|\ell|}e^{i\ell\phi}=k_-^{|\ell|}.
+\]
+
+Here
+
+\[
+k_+=k_x+ik_y,
 \qquad
-\sigma_\parallel>0,
-\qquad
-\sigma_\perp\le\sigma_\parallel.
-$$
+k_-=k_x-ik_y.
+\]
 
-The last condition is required for the on-axis normalization integral used here.
+### `lg_packet_phi(...)`
 
-Example:
+Returns the momentum-space packet wave function factor. This is useful for direct checks or for building diagnostic plots of the packet in momentum space.
 
-```python
-packet = LGPacket(ell=2, sigma_perp=0.2, sigma_par=0.4, kbar_z=20.0)
-```
+### `vortex_factor(...)`
 
-### `central_energy(packet, m=ELECTRON_MASS)`
-
-Computes the central on-axis energy:
-
-$$
-\varepsilon=\sqrt{m^2+\bar k_z^2}.
-$$
-
-Example:
-
-```python
-eps = central_energy(packet)
-```
-
-### `normalization_constant(packet, m=ELECTRON_MASS, accuracy=None)`
-
-Computes the relativistic normalization constant $N_\ell$ for the on-axis packet.
-
-The packet is normalized by
-
-$$
-\int \frac{d^3k}{(2\pi)^3 2E_k}\,|\phi_\ell(\mathbf k)|^2=1.
-$$
-
-For $\bar{\mathbf k}_\perp=0$, the code uses the one-dimensional formula obtained after analytic integration over azimuth and longitudinal momentum:
-
-$$
-N_\ell=
-\left[
-\frac{e^{2m^2/\sigma_\parallel^2}}
-{4\pi^2\sigma_\perp^{2|\ell|}|\ell|!}
-\int_0^\infty dk_\perp\,
- k_\perp^{2|\ell|+1}
- e^{-\left(1/\sigma_\perp^2-1/\sigma_\parallel^2\right)k_\perp^2}
- K_0\!\left(
- \frac{2m\sqrt{m^2+k_\perp^2}}{\sigma_\parallel^2}
- \right)
-\right]^{-1/2}.
-$$
-
-Implementation details:
-
-- the integral is evaluated with `scipy.integrate.quad` on $[0,\infty)$;
-- the modified Bessel function is `scipy.special.kv(0, ...)`;
-- no normalization is cached inside `LGPacket`.
-
-Example:
-
-```python
-N = normalization_constant(packet)
-```
-
-For scans:
-
-```python
-packets = [LGPacket(ell=ell, sigma_perp=0.18, sigma_par=0.35, kbar_z=20.0)
-           for ell in range(-3, 4)]
-normalizations = [normalization_constant(packet) for packet in packets]
-```
-
-### `spherical_normalization_constant(packet, m=ELECTRON_MASS)`
-
-Closed expression for the spherical limit
-
-$$
-\sigma_\perp=\sigma_\parallel=\sigma.
-$$
-
-The formula used is
-
-$$
-N_\ell^{\mathrm{sph}}=
-\frac{2^{3/2}\pi e^{-m^2/\sigma^2}}
-{\sigma\sqrt{K_{|\ell|+1}(2m^2/\sigma^2)}}.
-$$
-
-This function is mainly a test/reference for `normalization_constant(...)`.
-
-### `lg_packet_phi(k, packet, N, m=ELECTRON_MASS, impact_b=(0.0, 0.0))`
-
-Evaluates the momentum-space packet at a three-momentum `k`.
-
-The on-axis packet is
-
-$$
-\phi_\ell(\mathbf k)=
-N_\ell
-\frac{k_\perp^{|\ell|}}
-{\sigma_\perp^{|\ell|}\sqrt{|\ell|!}}
-\exp\left[
-\frac{(E_k-\bar E)^2}{2\sigma_\parallel^2}
--
-\frac{k_\perp^2}{2\sigma_\perp^2}
--
-\frac{(k_z-\bar k_z)^2}{2\sigma_\parallel^2}
-+i\ell\phi_k
-+i\mathbf b_\perp\cdot\mathbf k_\perp
-\right].
-$$
-
-Important: `impact_b` should normally be used only for the displaced second incoming packet. In the S-matrix functions the impact parameter is handled at the S-matrix level, so users usually do not need to call `lg_packet_phi(...)` directly.
+Returns the OAM phase and radial factor associated with a packet.
 
 ---
 
-## 6. `amplitudes.py`
+## 4. Normalization
+
+### `normalization_constant(packet, m=..., accuracy=...)`
+
+Computes the relativistic normalization constant \(N_\ell\) for an on-axis packet.
+
+Typical use:
+
+```python
+N1 = mv.normalization_constant(packet1, accuracy=acc)
+N2 = mv.normalization_constant(packet2, accuracy=acc)
+```
+
+For scans, compute `N1`, `N2` once and pass them explicitly to avoid recomputing normalization many times.
+
+For narrow packets, the implementation must avoid computing separately the unstable product
+
+\[
+\exp\left(\frac{2m^2}{\sigma_\parallel^2}\right)
+K_0\left(
+\frac{2m\sqrt{m^2+k_\perp^2}}{\sigma_\parallel^2}
+\right).
+\]
+
+A stable implementation uses
+
+\[
+K_\nu(x)=e^{-x}\operatorname{kve}(\nu,x),
+\]
+
+so that the exponential cancellation is performed analytically.
+
+The stable product is
+
+\[
+\exp\left[
+-\frac{2m}{\sigma_\parallel^2}
+\left(
+\sqrt{m^2+k_\perp^2}-m
+\right)
+\right]
+\operatorname{kve}
+\left(
+0,
+\frac{2m\sqrt{m^2+k_\perp^2}}{\sigma_\parallel^2}
+\right).
+\]
+
+### `spherical_normalization_constant(packet, m=...)`
+
+Closed expression for the normalization in the spherical limit
+
+\[
+\sigma_\perp=\sigma_\parallel.
+\]
+
+Use this only for checks or for exactly spherical packets.
+
+---
+
+## 5. Basic kinematics
+
+### `vec2(x)`, `vec3(x)`
+
+Convert input objects to 2D or 3D NumPy arrays. These functions are mostly convenience utilities.
+
+### `energy(k, m=...)`
+
+Returns
+
+\[
+E_{\mathbf k}=\sqrt{m^2+\mathbf k^2}.
+\]
+
+Input `k` is a 3-vector in MeV.
+
+### `central_energy(packet, m=...)`
+
+Returns
+
+\[
+\bar E = \sqrt{m^2+\bar k_z^2}
+\]
+
+for the central momentum of a packet.
+
+### `helicity(...)`
+
+Used where spin/helicity labels are needed. In the current impulse approximation, the implemented spin dependence reduces to helicity Kronecker deltas.
+
+### `kron_delta(a, b)`
+
+Kronecker delta helper.
+
+---
+
+## 6. Moller amplitude
 
 ### `moller_amplitude_impulse(...)`
 
-```python
-moller_amplitude_impulse(k1, k2, k3, k4, lam1, lam2, lam3, lam4)
-```
+Implements the impulse-approximation spinor amplitude used inside the S-matrix routines.
 
-Computes the ultrarelativistic paraxial impulse approximation to the plane-wave Møller amplitude:
+In the current impulse approximation the spin structure used in the probability module is effectively
 
-$$
-\mathcal M_{\mathrm{imp}}
+\[
+S_{\lambda_1\lambda_2\lambda_3\lambda_4}
 =
--
-\frac{8e^2\sqrt{E_1E_2E_3E_4}}
-{|\mathbf k_{3\perp}-\mathbf k_{1\perp}|^2}
-\delta_{\lambda_3\lambda_1}\delta_{\lambda_4\lambda_2}.
-$$
+S_0
+\delta_{\lambda_3\lambda_1}
+\delta_{\lambda_4\lambda_2}.
+\]
 
-Inputs:
+Therefore the unpolarized spin average satisfies
 
-- `k1`, `k2`: incoming three-momenta;
-- `k3`, `k4`: final three-momenta;
-- `lam1`, `lam2`, `lam3`, `lam4`: helicity labels;
-- optional `m` and `e_charge`.
-
-No regularization is applied. If
-
-$$
-|\mathbf k_{3\perp}-\mathbf k_{1\perp}|^2=0,
-$$
-
-the function raises `ZeroDivisionError`.
-
-Use this function when checking the plane-wave impulse amplitude directly. The closed packet S-matrix functions call the transverse-integral version instead.
+\[
+\frac{1}{4}
+\sum_{\lambda_1,\lambda_2}
+\sum_{\lambda_3,\lambda_4}
+|S_{\lambda_1\lambda_2\lambda_3\lambda_4}|^2
+=
+|S_0|^2.
+\]
 
 ---
 
-## 7. `transverse.py`
+## 7. Transverse integral
 
-The functions in this module evaluate the transverse integral in the closed
-impulse S-matrix.  The implemented integral is the first-order expansion of the
-transverse denominator.
+The transverse integral is one of the central analytic pieces of the project.
 
-Define
+The basic definitions are
 
-$$
-k_+=k_x+i k_y,
-\qquad
-k_-=k_x-i k_y,
-$$
-
-$$
-K_+=K_x+iK_y,
-\qquad
-K_-=K_x-iK_y,
-$$
-
-and
-
-$$
-\chi_+=\frac{e^{-i\phi_3}}{k_{3\perp}},
-\qquad
-\chi_-=\frac{e^{+i\phi_3}}{k_{3\perp}}.
-$$
-
-The denominator expansion is
-
-$$
-\frac{1}{|\mathbf k_{3\perp}-\mathbf k_\perp|^2}
-\simeq
-\frac{1}{k_{3\perp}^2}
-\left(1+\chi_+ k_+ + \chi_- k_-\right).
-$$
-
-The transverse Gaussian is
-
-$$
-\exp\left[
--\frac{\alpha}{2} k_\perp^2
-+
-\beta k_\perp\cdot K_\perp
--
-\frac{\gamma}{2}|K_\perp-k_\perp|^2
--
-i b_\perp\cdot k_\perp
-\right].
-$$
-
-Introduce
-
-$$
+\[
 A=\alpha+\gamma,
-$$
+\]
 
-$$
-J_0=(\beta+\gamma)K_\perp-i b_\perp,
-$$
+\[
+\mathbf J_0=(\beta+\gamma)\mathbf K_\perp-i\mathbf b_\perp,
+\]
 
-$$
+\[
 p_+=\frac{J_{0x}+iJ_{0y}}{A},
 \qquad
 p_-=\frac{J_{0x}-iJ_{0y}}{A},
-$$
+\]
 
-$$
+\[
+K_+=K_x+iK_y,
+\qquad
+K_-=K_x-iK_y,
+\]
+
+\[
 q_+=K_+-p_+,
 \qquad
 q_-=K_--p_-.
-$$
+\]
 
-The common factor in all closed transverse expressions is
+The common transverse prefactor is
 
-$$
+\[
 \mathcal P
 =
-\frac{2\pi}{A k_{3\perp}^2}
-\exp\left[
-\frac{J_0^2}{2A}
+\frac{1}{k_{3\perp}^2}
+\frac{2\pi}{A}
+\exp\left(
+\frac{\mathbf J_0^2}{2A}
 -
 \frac{\gamma K_\perp^2}{2}
-\right].
-$$
+\right).
+\]
 
-Here all products are bilinear transverse products, not Hermitian scalar
-products.
+Here
+
+\[
+\mathbf J_0^2=J_{0x}^2+J_{0y}^2,
+\]
+
+which is a bilinear square, not a Hermitian norm.
 
 ### `laguerre_derivative(a, b, c1, c2, c12)`
 
 Computes
 
-$$
+\[
 D_{a,b}(c_1,c_2;c_{12})
 =
 \left.
-\partial_{t_1}^a\partial_{t_2}^b
+\partial_{t_1}^{a}
+\partial_{t_2}^{b}
 \exp(c_1t_1+c_2t_2-c_{12}t_1t_2)
 \right|_{t_1=t_2=0}.
-$$
+\]
 
-The direct finite-sum identity is
+For \(b\ge a\),
 
-$$
+\[
 D_{a,b}
 =
-\sum_{r=0}^{\min(a,b)}
-\frac{a!b!}{(a-r)!(b-r)!r!}
-(-c_{12})^r c_1^{a-r} c_2^{b-r}.
-$$
+(-c_{12})^a a!\,
+c_2^{b-a}
+L_a^{b-a}\left(\frac{c_1c_2}{c_{12}}\right).
+\]
 
-The Laguerre form used in the code is
+For \(a>b\),
 
-$$
+\[
 D_{a,b}
 =
-(-c_{12})^a a! c_2^{b-a}
-L_a^{b-a}\left(\frac{c_1c_2}{c_{12}}\right),
-\qquad b\ge a,
-$$
+(-c_{12})^b b!\,
+c_1^{a-b}
+L_b^{a-b}\left(\frac{c_1c_2}{c_{12}}\right).
+\]
 
-and
+This form is used for opposite-sign OAM cases.
 
-$$
-D_{a,b}
-=
-(-c_{12})^b b! c_1^{a-b}
-L_b^{a-b}\left(\frac{c_1c_2}{c_{12}}\right),
-\qquad a>b.
-$$
+### `laguerre_derivative_sum(...)`
 
-There is no extra factor $(-c_2)^{b-a}$.  This is fixed by the limiting case
-
-$$
-D_{0,b}=c_2^b.
-$$
-
-Negative derivative orders are not accepted by `laguerre_derivative`; zero-OAM
-cases are handled separately in `transverse_integral_explicit`.
-
-### Closed transverse expressions
-
-Let
-
-$$
-n=|\ell_1|,
-\qquad
-m=|\ell_2|.
-$$
-
-The implemented expressions are the following.
-
-For $\ell_1=0,\ell_2=0$:
-
-$$
-I_\perp=\mathcal P\left(1+\chi_+p_++\chi_-p_-\right).
-$$
-
-For $\ell_1=0,\ell_2=m>0$:
-
-$$
-I_\perp=\mathcal P\left[
-q_+^m
-+
-\chi_+p_+q_+^m
-+
-\chi_-\left(p_-q_+^m-\frac{2m}{A}q_+^{m-1}\right)
-\right].
-$$
-
-For $\ell_1=0,\ell_2=-m<0$:
-
-$$
-I_\perp=\mathcal P\left[
-q_-^m
-+
-\chi_+\left(p_+q_-^m-\frac{2m}{A}q_-^{m-1}\right)
-+
-\chi_-p_-q_-^m
-\right].
-$$
-
-For $\ell_1=n>0,\ell_2=0$:
-
-$$
-I_\perp=\mathcal P\left[
-p_+^n
-+
-\chi_+p_+^{n+1}
-+
-\chi_-\left(p_-p_+^n+\frac{2n}{A}p_+^{n-1}\right)
-\right].
-$$
-
-For $\ell_1=-n<0,\ell_2=0$:
-
-$$
-I_\perp=\mathcal P\left[
-p_-^n
-+
-\chi_+\left(p_+p_-^n+\frac{2n}{A}p_-^{n-1}\right)
-+
-\chi_-p_-^{n+1}
-\right].
-$$
-
-For equal positive signs, $\ell_1=n>0,\ell_2=m>0$:
-
-$$
-I_\perp=\mathcal P\left[
-p_+^n q_+^m
-+
-\chi_+p_+^{n+1}q_+^m
-+
-\chi_-\left(
-p_-p_+^n q_+^m
-+
-\frac{2n}{A}p_+^{n-1}q_+^m
--
-\frac{2m}{A}p_+^nq_+^{m-1}
-\right)
-\right].
-$$
-
-For equal negative signs, $\ell_1=-n<0,\ell_2=-m<0$:
-
-$$
-I_\perp=\mathcal P\left[
-p_-^n q_-^m
-+
-\chi_+\left(
-p_+p_-^n q_-^m
-+
-\frac{2n}{A}p_-^{n-1}q_-^m
--
-\frac{2m}{A}p_-^nq_-^{m-1}
-\right)
-+
-\chi_-p_-^{n+1}q_-^m
-\right].
-$$
-
-For opposite signs $\ell_1=n>0,\ell_2=-m<0$, set
-
-$$
-D_{a,b}=D_{a,b}(p_+,q_-;2/A).
-$$
-
-Then
-
-$$
-I_\perp=\mathcal P\left[
-D_{n,m}
-+
-\chi_+D_{n+1,m}
-+
-\chi_-\left(K_-D_{n,m}-D_{n,m+1}\right)
-\right].
-$$
-
-For opposite signs $\ell_1=-n<0,\ell_2=m>0$, set
-
-$$
-D_{a,b}=D_{a,b}(p_-,q_+;2/A).
-$$
-
-Then
-
-$$
-I_\perp=\mathcal P\left[
-D_{n,m}
-+
-\chi_-D_{n+1,m}
-+
-\chi_+\left(K_+D_{n,m}-D_{n,m+1}\right)
-\right].
-$$
-
-These opposite-sign expressions are equivalent to the $k_\perp^2$ form in the
-analytic derivation, but avoid negative derivative orders and make the zero-OAM
-limits unambiguous.
+Direct finite-sum implementation of the same derivative. It is mainly a diagnostic check for `laguerre_derivative(...)`.
 
 ### `transverse_integral_explicit(...)`
 
-```python
-transverse_integral_explicit(
-    ell1,
-    ell2,
-    k3_perp,
-    K_perp,
-    b_perp,
-    alpha,
-    beta,
-    gamma,
-    return_case=False,
-)
-```
+Computes the analytic first-order expanded transverse integral for arbitrary integer \(\ell_1,\ell_2\).
 
-Computes the closed first-order transverse integral.  The returned value already
-includes $\mathcal P$, so these factors must not be multiplied again outside
-this function.
+It covers all cases:
 
-### `vortex_factor(z, ell)`
+\[
+(0,0),
+\qquad
+(0,\pm m),
+\qquad
+(\pm n,0),
+\qquad
+(n,m),
+\qquad
+(-n,-m),
+\qquad
+(n,-m),
+\qquad
+(-n,m).
+\]
 
-Returns the complex vortex factor used in direct numerical checks:
+The same-sign cases use direct powers of \(p_\pm,q_\pm\).
 
-$$
-V_\ell(z)=
-\begin{cases}
-z^\ell, & \ell>0,\\
-1, & \ell=0,\\
-(z^*)^{|\ell|}, & \ell<0.
-\end{cases}
-$$
+The opposite-sign cases use
 
-Here $z=k_x+i k_y$ or $z=(K_x-k_x)+i(K_y-k_y)$.
+\[
+D^{(+,-)}_{a,b}
+=
+D_{a,b}\left(p_+,q_-;\frac{2}{A}\right),
+\]
+
+\[
+D^{(-,+)}_{a,b}
+=
+D_{a,b}\left(p_-,q_+;\frac{2}{A}\right).
+\]
 
 ### `transverse_integral_numeric_quad(...)`
 
-Direct numerical check of the same transverse integral:
+Numerical check for the same first-order transverse integral.
 
-$$
-I_\perp=
-\int_0^\infty r\,dr
-\int_0^{2\pi}d\phi\,F(r,\phi).
-$$
-
-The angular integral is evaluated on a uniform periodic grid; for each angular
-node the radial integral over $[0,\infty)$ is computed by `scipy.integrate.quad`,
-with real and imaginary parts integrated separately.  This function is a
-verification routine.  Use `transverse_integral_explicit(...)` for scans.
+This is intended for verification, not for production scans.
 
 ---
 
-## 8. `smatrix.py`
+## 8. S-matrix routines
 
-### `impulse_parameters(packet1, packet2, k3, k4, impact_b, m=ELECTRON_MASS)`
+### `impulse_parameters(...)`
 
-Computes intermediate parameters used by the closed impulse S-matrix.
+Computes the intermediate parameters entering the impulse-approximation expression.
 
-Main returned quantities:
-
-- `K_vec`: $\mathbf K=\mathbf k_3+\mathbf k_4$;
-- `K_perp`: $\mathbf K_\perp$;
-- `E3`, `E4`, `E_K`;
-- `eps1`, `eps2`: central packet energies;
-- `v1`, `v2`: longitudinal velocities $\bar k_z/\varepsilon$;
-- `DeltaKz`: $K_z-\bar k_{1z}-\bar k_{2z}$;
-- `Xi0`: constant part of the exponent outside the transverse integral;
-- `A_long`, `Omega_long`: longitudinal impulse integration parameters;
-- `alpha`, `beta`, `gamma`: transverse Gaussian coefficients.
-
-This function is useful for debugging and for inspecting the decomposition. Most calculations should call `S_impulse_closed_form(...)` instead.
-
-Example:
-
-```python
-pars = impulse_parameters(packet1, packet2, k3, k4, impact_b)
-print(pars["alpha"], pars["beta"], pars["gamma"])
-```
+These include kinematic quantities, transverse Gaussian coefficients, and factors entering the reduced S-matrix.
 
 ### `S_impulse_common_factor(...)`
 
-Computes the factor multiplying the transverse integral in the closed impulse S-matrix.
+Computes the common factor outside the transverse integral in the impulse approximation.
 
-The full structure is
+Important: the transverse factor
 
-$$
-S_{fi}^{\mathrm{imp}}
-=
-\mathcal C\,I_\perp.
-$$
+\[
+\frac{1}{k_{3\perp}^2}\frac{2\pi}{A_0}
+\exp\left(
+\frac{\mathbf J_{00}^2}{2A_0}
+-
+\frac{\gamma_0 K_\perp^2}{2}
+\right)
+\]
 
-This function returns
-
-```python
-common_factor, details
-```
-
-where `common_factor` is $\mathcal C$ and `details` contains intermediate quantities.
-
-It also applies the helicity deltas. If the impulse helicity condition fails,
-
-$$
-\delta_{\lambda_3\lambda_1}\delta_{\lambda_4\lambda_2}=0,
-$$
-
-then the returned common factor is zero and `details` contains a reason.
-
-Use this function when you want to compare different transverse-integral implementations with the same outer prefactor.
+belongs to `transverse_integral_explicit(...)` and must not be duplicated in the common factor.
 
 ### `S_impulse_closed_form(...)`
 
+Main analytic impulse-approximation S-matrix routine.
+
+Typical call:
+
 ```python
-S_impulse_closed_form(
+S = mv.S_impulse_closed_form(
     k3,
     k4,
     packet1,
     packet2,
-    lam1,
-    lam2,
-    lam3,
-    lam4,
-    impact_b=(0.0, 0.0),
-    N1=None,
-    N2=None,
-    accuracy=None,
-    return_details=False,
-)
-```
-
-Main production function for the closed impulse-approximation S-matrix.
-
-It performs:
-
-1. helicity selection;
-2. computation or use of supplied normalizations `N1`, `N2`;
-3. construction of the common prefactor;
-4. analytic transverse integration via `transverse_integral_explicit(...)`;
-5. multiplication into the final complex S-matrix element.
-
-Use this function for parameter scans.
-
-Recommended for scans:
-
-```python
-N1 = normalization_constant(packet1)
-N2 = normalization_constant(packet2)
-
-S = S_impulse_closed_form(
-    k3,
-    k4,
-    packet1,
-    packet2,
-    lam1=0.5,
+    lam1=-0.5,
     lam2=0.5,
-    lam3=0.5,
+    lam3=-0.5,
     lam4=0.5,
     impact_b=impact_b,
     N1=N1,
     N2=N2,
+    accuracy=acc,
 )
 ```
 
-To inspect internals:
+Inputs:
 
-```python
-S, details = S_impulse_closed_form(..., return_details=True)
-print(details["transverse_case"])
-print(details["Iperp"])
-print(details["Xi0"])
-```
+- `k3`, `k4`: final 3-momenta in MeV.
+- `packet1`, `packet2`: incoming wave packets.
+- `lam1`, `lam2`, `lam3`, `lam4`: helicities.
+- `impact_b`: 2-vector in MeV\(^{-1}\).
+- `N1`, `N2`: normalization constants. If omitted, they may be recomputed.
+- `accuracy`: numerical accuracy object.
 
 ### `S_impulse_numeric_transverse_quad(...)`
 
-Same S-matrix factorization as `S_impulse_closed_form(...)`, but replaces the analytic transverse integral by `transverse_integral_numeric_quad(...)`.
-
-Use it for checks:
-
-```python
-S_closed = S_impulse_closed_form(...)
-S_numeric = S_impulse_numeric_transverse_quad(..., n_phi=64)
-print(relative_error(S_closed, S_numeric))
-```
-
-Do not use this for large scans unless needed; it is much slower.
+Same impulse S-matrix expression, but with the transverse integral computed numerically. This is a diagnostic routine used to validate the analytic transverse expression.
 
 ---
 
-## 9. Built-in error-reporting functions
+## 9. Differential probability
 
-The project does not use a separate pytest-style test folder. Instead, numerical consistency checks are ordinary package functions that can be called directly from `analysis_workspace.ipynb` or from a script. They do not decide whether a result has passed or failed. They only compute and print numerical errors.
+The probability module evaluates
 
-### `check_normalization(...)`
+\[
+w(\mathbf K_\perp)
+=
+\frac{dP}{d^2K_\perp}
+\]
 
-Compares `normalization_constant(...)` with the closed spherical formula for
+at fixed total final transverse momentum
 
-$$
-\sigma_\perp=\sigma_\parallel.
-$$
+\[
+\mathbf K_\perp
+=
+\mathbf k_{3\perp}+\mathbf k_{4\perp}.
+\]
 
-This avoids the circular check of computing a normalization from an integral and substituting it back into the same integral.
+The implemented expression is
 
-Example:
+\[
+w(\mathbf K_\perp)
+=
+\int
+\frac{d^2 k_{3\perp}\,dk_{3z}\,dk_{4z}}
+{(2\pi)^6\,4E_3E_4}
+\,
+\frac{1}{4}
+\sum_{\lambda_1,\lambda_2}
+\sum_{\lambda_3,\lambda_4}
+|S_{fi}|^2.
+\]
+
+The constraint of fixed \(\mathbf K_\perp\) is imposed by
+
+\[
+\mathbf k_{4\perp}
+=
+\mathbf K_\perp-\mathbf k_{3\perp}.
+\]
+
+The transverse integration over \(\mathbf k_{3\perp}\) is performed in polar coordinates:
+
+\[
+d^2k_{3\perp}
+=
+\rho\,d\rho\,d\phi.
+\]
+
+The radial integrations use Gauss-Legendre quadrature on finite intervals. Angular integrations use periodic trapezoidal quadrature on \([0,2\pi)\).
+
+### `ProbabilityQuadrature`
+
+Stores all quadrature parameters for both the fixed-\(\mathbf K_\perp\) differential probability and the remaining outer \(\mathbf K_\perp\) integration.
+
+Current fields:
 
 ```python
-errors = check_normalization(accuracy=accuracy)
-```
-
-The returned object is a dictionary mapping a label to a relative error.
-
-### `check_transverse_integral(...)`
-
-Compares:
-
-```python
-transverse_integral_explicit(...)
-```
-
-against
-
-```python
-transverse_integral_numeric_quad(...)
-```
-
-for several sign combinations of $\ell_1,\ell_2$. This checks the case logic and the Laguerre derivative formula.
-
-Example:
-
-```python
-errors = check_transverse_integral(
-    accuracy=accuracy,
-    n_phi=16,
+ProbabilityQuadrature(
+    k3_perp_range=(...),
+    k3z_range=(...),
+    k4z_range=(...),
+    K_perp_range=(...),
+    n_k3_perp=...,
+    n_phi=...,
+    n_k3z=...,
+    n_k4z=...,
+    n_K_perp=...,
+    n_K_phi=...,
 )
 ```
 
-The parameter `n_phi` controls the angular resolution of the direct numerical transverse integral. It is intentionally an explicit argument of the check function, not a hidden field of `NumericalAccuracy`.
+Meanings:
 
-### `check_smatrix(...)`
+- `k3_perp_range`: integration range for \(\rho=|\mathbf k_{3\perp}|\).
+- `k3z_range`: integration range for \(k_{3z}\).
+- `k4z_range`: integration range for \(k_{4z}\).
+- `K_perp_range`: integration range for \(K=|\mathbf K_\perp|\) in the final outer transverse integral.
+- `n_k3_perp`: Gauss-Legendre nodes for \(\rho\).
+- `n_phi`: angular nodes for \(\phi\), the angle of \(\mathbf k_{3\perp}\).
+- `n_k3z`: Gauss-Legendre nodes for \(k_{3z}\).
+- `n_k4z`: Gauss-Legendre nodes for \(k_{4z}\).
+- `n_K_perp`: Gauss-Legendre nodes for \(K=|\mathbf K_\perp|\).
+- `n_K_phi`: angular nodes for \(\phi_K\), the angle of \(\mathbf K_\perp\).
 
-Compares:
+Example for parameters close to the cited plots:
 
 ```python
-S_impulse_closed_form(...)
+quadrature = mv.ProbabilityQuadrature(
+    k3_perp_range=(0.010, 0.050),
+    k3z_range=(10.0 - 8.0 * sigma1_par, 10.0 + 8.0 * sigma1_par),
+    k4z_range=(-10.0 - 8.0 * sigma2_par, -10.0 + 8.0 * sigma2_par),
+    K_perp_range=(0.0, 3.0e-4),
+    n_k3_perp=10,
+    n_phi=24,
+    n_k3z=10,
+    n_k4z=10,
+    n_K_perp=10,
+    n_K_phi=24,
+)
 ```
 
-against
+### `legendre_nodes_and_weights(interval, n)`
+
+Returns Gauss-Legendre nodes and weights on a finite interval.
+
+If \(x_i,w_i\) are nodes and weights on \([-1,1]\), the map to \([a,b]\) is
+
+\[
+t_i=\frac{b-a}{2}x_i+\frac{a+b}{2},
+\]
+
+\[
+W_i=\frac{b-a}{2}w_i.
+\]
+
+### `spin_averaged_s_abs2_impulse(...)`
+
+Computes
+
+\[
+\frac{1}{4}
+\sum_{\lambda_1,\lambda_2}
+\sum_{\lambda_3,\lambda_4}
+|S_{fi}|^2
+\]
+
+in the impulse approximation.
+
+Because the current spin dependence is only
+
+\[
+\delta_{\lambda_3\lambda_1}\delta_{\lambda_4\lambda_2},
+\]
+
+the default branch computes one helicity-conserving amplitude and returns its squared modulus.
+
+Use
 
 ```python
-S_impulse_numeric_transverse_quad(...)
+explicit_spin_sum=True
 ```
 
-The two functions share the same common prefactor but use different transverse integrations. This check tests the assembly of the full impulse S-matrix.
+only as a diagnostic, because it performs all 16 helicity combinations.
+
+### `diff_probability(...)`
+
+Computes \(w(\mathbf K_\perp)\) at one fixed value of \(\mathbf K_\perp\).
 
 Example:
 
 ```python
-errors = check_smatrix(
-    accuracy=accuracy,
-    n_phi=16,
+K_perp = np.array([0.0, 0.0])
+
+w = mv.diff_probability(
+    K_perp,
+    packet1,
+    packet2,
+    quadrature,
+    impact_b=impact_b,
+    N1=N1,
+    N2=N2,
+    accuracy=acc,
 )
 ```
 
-### `run_all_checks(...)`
+Return dimension:
 
-Runs all built-in error-reporting functions:
+\[
+[w]=\mathrm{MeV}^{-2}.
+\]
+
+### `diff_probability_grid(...)`
+
+Computes `diff_probability(...)` on a rectangular \(K_x,K_y\) grid for color plots.
+
+Example:
 
 ```python
-accuracy = NumericalAccuracy(
+Kx_values = np.linspace(-3.0e-4, 3.0e-4, 31)
+Ky_values = np.linspace(-3.0e-4, 3.0e-4, 31)
+
+W = mv.diff_probability_grid(
+    Kx_values,
+    Ky_values,
+    packet1,
+    packet2,
+    quadrature,
+    impact_b=impact_b,
+    N1=N1,
+    N2=N2,
+    accuracy=acc,
+)
+```
+
+`W[iy, ix]` corresponds to
+
+\[
+K_x=Kx\_values[ix],
+\qquad
+K_y=Ky\_values[iy].
+\]
+
+For plotting axes in eV, multiply the `extent` by \(10^6\).
+
+### `total_probability(...)`
+
+Computes
+
+\[
+P=\int w(\mathbf K_\perp)d^2K_\perp.
+\]
+
+The outer integral is done in polar coordinates:
+
+\[
+\mathbf K_\perp=K(\cos\phi_K,\sin\phi_K),
+\]
+
+\[
+d^2K_\perp=K\,dK\,d\phi_K.
+\]
+
+The radial \(K\) integral uses Gauss-Legendre quadrature over `quadrature.K_perp_range`.
+
+The angular \(\phi_K\) integral uses periodic trapezoidal quadrature with `quadrature.n_K_phi` nodes.
+
+Example:
+
+```python
+P = mv.total_probability(
+    packet1,
+    packet2,
+    quadrature,
+    impact_b=impact_b,
+    N1=N1,
+    N2=N2,
+    accuracy=acc,
+)
+```
+
+Return dimension: dimensionless.
+
+### `Ky_average(...)`
+
+Computes
+
+\[
+\langle K_y\rangle
+=
+\frac{
+\int K_y w(\mathbf K_\perp)d^2K_\perp
+}{
+\int w(\mathbf K_\perp)d^2K_\perp
+}.
+\]
+
+Example:
+
+```python
+Ky_mean = mv.Ky_average(
+    packet1,
+    packet2,
+    quadrature,
+    impact_b=impact_b,
+    N1=N1,
+    N2=N2,
+    accuracy=acc,
+)
+
+print(Ky_mean, "MeV")
+print(Ky_mean * 1.0e6, "eV")
+```
+
+Return dimension: MeV.
+
+---
+
+## 10. Color plot workflow
+
+Example setup for parameters close to the paper figure:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+import moller_vortex as mv
+
+HBARC_MEV_NM = 1.973269804e-4
+NM_TO_MEV_INV = 1.0 / HBARC_MEV_NM
+
+def spatial_width_nm_to_momentum_mev(width_nm: float) -> float:
+    return HBARC_MEV_NM / width_nm
+
+sigma1_perp = spatial_width_nm_to_momentum_mev(10.0)
+sigma2_perp = spatial_width_nm_to_momentum_mev(2.0)
+sigma1_par = spatial_width_nm_to_momentum_mev(5.0)
+sigma2_par = spatial_width_nm_to_momentum_mev(1.0)
+
+packet1 = mv.LGPacket(
+    ell=5,
+    sigma_perp=sigma1_perp,
+    sigma_par=sigma1_par,
+    kbar_z=10.0,
+)
+
+packet2 = mv.LGPacket(
+    ell=0,
+    sigma_perp=sigma2_perp,
+    sigma_par=sigma2_par,
+    kbar_z=-10.0,
+)
+
+impact_b = np.array([5.0 * NM_TO_MEV_INV, 0.0], dtype=float)
+
+acc = mv.NumericalAccuracy(
     quad_epsabs=1.0e-10,
     quad_epsrel=1.0e-10,
     quad_limit=300,
     root_residual_atol=1.0e-10,
 )
 
-results = run_all_checks(
-    accuracy=accuracy,
-    n_phi=16,
-    verbose=True,
+N1 = mv.normalization_constant(packet1, accuracy=acc)
+N2 = mv.normalization_constant(packet2, accuracy=acc)
+
+quadrature = mv.ProbabilityQuadrature(
+    k3_perp_range=(0.010, 0.050),
+    k3z_range=(10.0 - 8.0 * sigma1_par, 10.0 + 8.0 * sigma1_par),
+    k4z_range=(-10.0 - 8.0 * sigma2_par, -10.0 + 8.0 * sigma2_par),
+    K_perp_range=(0.0, 3.0e-4),
+    n_k3_perp=10,
+    n_phi=24,
+    n_k3z=10,
+    n_k4z=10,
+    n_K_perp=10,
+    n_K_phi=24,
 )
 ```
 
-The returned object has the form:
+Compute a rectangular colorplot grid:
 
 ```python
-{
-    "normalization": {...},
-    "transverse_integral": {...},
-    "smatrix": {...},
-}
+Kx_values = np.linspace(-3.0e-4, 3.0e-4, 31)
+Ky_values = np.linspace(-3.0e-4, 3.0e-4, 31)
+
+W = mv.diff_probability_grid(
+    Kx_values,
+    Ky_values,
+    packet1,
+    packet2,
+    quadrature,
+    impact_b=impact_b,
+    N1=N1,
+    N2=N2,
+    accuracy=acc,
+)
 ```
 
-No tolerance is applied inside these functions. The notebook or script that calls them decides how to interpret the returned errors.
+Plot:
+
+```python
+fig, ax = plt.subplots(figsize=(5.5, 4.8))
+
+image = ax.imshow(
+    W,
+    origin="lower",
+    extent=[
+        Kx_values[0] * 1.0e6,
+        Kx_values[-1] * 1.0e6,
+        Ky_values[0] * 1.0e6,
+        Ky_values[-1] * 1.0e6,
+    ],
+    aspect="equal",
+)
+
+ax.set_xlabel(r"$K_x$ [eV]")
+ax.set_ylabel(r"$K_y$ [eV]")
+ax.set_title(r"$w(\mathbf{K}_{\perp})$")
+
+cbar = fig.colorbar(image, ax=ax)
+cbar.set_label(r"$w(\mathbf{K}_{\perp})$ [MeV$^{-2}$]")
+
+fig.tight_layout()
+plt.show()
+```
+
+If values span many orders of magnitude, use logarithmic plotting.
 
 ---
 
-## 10. Recommended patterns for future work
+## 11. Superkick scan workflow
 
-### Scan over a discrete OAM charge
+To compute
+
+\[
+\langle K_y\rangle(b_x),
+\]
+
+use `Ky_average(...)` for each impact parameter.
+
+Example:
 
 ```python
-base1 = LGPacket(ell=0, sigma_perp=0.18, sigma_par=0.35, kbar_z=20.0)
-packet2 = LGPacket(ell=-1, sigma_perp=0.18, sigma_par=0.35, kbar_z=-20.0)
-N2 = normalization_constant(packet2)
+b_x_nm = np.linspace(0.0, 40.0, 41)
 
-results = []
-for ell in range(-4, 5):
-    packet1 = LGPacket(
-        ell=ell,
-        sigma_perp=base1.sigma_perp,
-        sigma_par=base1.sigma_par,
-        kbar_z=base1.kbar_z,
-    )
-    N1 = normalization_constant(packet1)
-    S = S_impulse_closed_form(
-        k3,
-        k4,
+Ky_values = np.array([
+    mv.Ky_average(
         packet1,
         packet2,
-        lam1=0.5,
-        lam2=0.5,
-        lam3=0.5,
-        lam4=0.5,
-        impact_b=impact_b,
+        quadrature,
+        impact_b=np.array([b_nm * NM_TO_MEV_INV, 0.0], dtype=float),
         N1=N1,
         N2=N2,
+        accuracy=acc,
     )
-    results.append((ell, S))
+    for b_nm in b_x_nm
+])
+
+fig, ax = plt.subplots(figsize=(5.5, 4.2))
+
+ax.plot(
+    b_x_nm,
+    Ky_values * 1.0e6,
+    marker="o",
+    linewidth=1.5,
+)
+
+ax.set_xlabel(r"$b_x$ [nm]")
+ax.set_ylabel(r"$\langle K_y\rangle$ [eV]")
+ax.set_title(r"$\langle K_y\rangle$ as a function of $b_x$")
+ax.grid(True)
+
+fig.tight_layout()
+plt.show()
 ```
 
-### Scan over a continuous width
+Runtime estimate:
+
+If a \(31\times31\) colorplot took about 20 minutes, then a scan with
 
 ```python
-sigma_values = np.linspace(0.12, 0.25, 20)
-results = []
-
-for sigma_perp in sigma_values:
-    packet1 = LGPacket(ell=1, sigma_perp=sigma_perp, sigma_par=0.35, kbar_z=20.0)
-    N1 = normalization_constant(packet1)
-    S = S_impulse_closed_form(
-        k3,
-        k4,
-        packet1,
-        packet2,
-        lam1=0.5,
-        lam2=0.5,
-        lam3=0.5,
-        lam4=0.5,
-        impact_b=impact_b,
-        N1=N1,
-        N2=N2,
-    )
-    results.append((sigma_perp, S))
+len(b_x_nm) = 41
+n_K_perp = 10
+n_K_phi = 24
 ```
 
-### Keep normalization explicit
+uses approximately
 
-Do this:
+\[
+41\cdot 10\cdot24=9840
+\]
+
+calls to `diff_probability(...)`.
+
+A \(31\times31\) colorplot uses
+
+\[
+31\cdot31=961
+\]
+
+calls.
+
+So the \(\langle K_y\rangle(b_x)\) scan can take about
+
+\[
+\frac{9840}{961}\approx 10.2
+\]
+
+times longer than the colorplot at the same internal quadrature settings.
+
+---
+
+## 12. Numerical strategy
+
+The code uses deterministic quadrature.
+
+For finite radial and longitudinal intervals:
+
+\[
+\int_a^b f(x)\,dx
+\simeq
+\sum_i W_i f(x_i),
+\]
+
+where \(x_i,W_i\) are Gauss-Legendre nodes and weights.
+
+For angular variables:
+
+\[
+\int_0^{2\pi} f(\phi)\,d\phi
+\simeq
+\frac{2\pi}{N}
+\sum_{j=0}^{N-1}
+f\left(\frac{2\pi j}{N}\right).
+\]
+
+This is the periodic trapezoidal rule. All weights are equal because the endpoint \(2\pi\) is not included and \(0\equiv2\pi\).
+
+Increase the following parameters for convergence:
 
 ```python
-N1 = normalization_constant(packet1)
-S = S_impulse_closed_form(..., N1=N1)
+n_k3_perp
+n_phi
+n_k3z
+n_k4z
+n_K_perp
+n_K_phi
 ```
 
-rather than recomputing `N1` inside every call during a scan.
+A sensible workflow is:
 
-### Use `return_details=True` when debugging
+1. Use small quadrature to verify signs and scales.
+2. Increase the internal quadrature for `diff_probability`.
+3. Increase the outer \(K\)-quadrature for `total_probability` and `Ky_average`.
+4. Check convergence at representative points before running expensive full scans.
 
-```python
-S, details = S_impulse_closed_form(..., return_details=True)
-print(details.keys())
+---
+
+## 13. Git and editable installation
+
+For ordinary project work, use an editable install:
+
+```powershell
+python -m pip install -e ".[dev]"
 ```
 
-Useful keys include:
+Then changes in `src/moller_vortex/*.py` are picked up after restarting the Python kernel.
+
+When adding a new file, for example
 
 ```text
-K_perp, E_K, eps1, eps2, v1, v2, Xi0, alpha, beta, gamma,
-Iperp, transverse_case, common_factor
+src/moller_vortex/probability.py
 ```
 
----
+make sure it is exported in
 
-## 11. What not to assume
+```text
+src/moller_vortex/__init__.py
+```
 
-- The code is on-axis: $\bar{\mathbf k}_\perp=0$.
-- The S-matrix functions implement impulse approximation, not the full Møller amplitude.
-- The transverse integral uses the first-order expansion of the transverse denominator.
-- No artificial regularization is applied.
-- The impact parameter is associated with the second incoming packet in the S-matrix assembly.
+For example:
+
+```python
+from .probability import *
+```
+
+or preferably explicit imports:
+
+```python
+from .probability import (
+    ProbabilityQuadrature,
+    diff_probability,
+    diff_probability_grid,
+    total_probability,
+    Ky_average,
+)
+```
+
+After editing `__init__.py`, restart the notebook kernel.
+
+For Git workflow:
+
+```powershell
+git status
+git add src/moller_vortex/probability.py
+git commit -m "Update probability integration routines"
+git push
+```
+
+Do not commit generated Python cache files:
+
+```text
+__pycache__/
+*.pyc
+```
+
+They should be ignored by `.gitignore`.

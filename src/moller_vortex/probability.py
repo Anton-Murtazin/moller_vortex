@@ -31,21 +31,33 @@ class ProbabilityQuadrature:
     k3z_range, k4z_range:
         Integration intervals for the final longitudinal momenta.
 
+    K_perp_range:
+        Integration interval for K = |K_perp| in the final outer transverse
+        integration.
+
     n_k3_perp, n_k3z, n_k4z:
         Numbers of Gauss-Legendre nodes for the corresponding finite intervals.
 
     n_phi:
-        Number of uniformly spaced azimuthal nodes on [0, 2*pi).
+        Number of uniformly spaced azimuthal nodes for the angle of k3_perp.
+
+    n_K_perp:
+        Number of Gauss-Legendre nodes for K = |K_perp|.
+
+    n_K_phi:
+        Number of uniformly spaced azimuthal nodes for the angle of K_perp.
     """
 
     k3_perp_range: tuple[float, float]
     k3z_range: tuple[float, float]
     k4z_range: tuple[float, float]
+    K_perp_range: tuple[float, float]
     n_k3_perp: int
     n_phi: int
     n_k3z: int
     n_k4z: int
-
+    n_K_perp: int
+    n_K_phi: int
 
 def legendre_nodes_and_weights(interval: tuple[float, float], n: int) -> tuple[np.ndarray, np.ndarray]:
     """Return Gauss-Legendre nodes and weights on a finite interval."""
@@ -296,3 +308,150 @@ def diff_probability_grid(
             )
 
     return values
+
+def total_probability(
+    packet1: LGPacket,
+    packet2: LGPacket,
+    quadrature: ProbabilityQuadrature,
+    *,
+    impact_b,
+    N1: float | None = None,
+    N2: float | None = None,
+    m: float = ELECTRON_MASS,
+    e_charge: float = ELECTRON_CHARGE,
+    accuracy: NumericalAccuracy | None = None,
+    helicities: Iterable[float] = (-0.5, 0.5),
+    explicit_spin_sum: bool = False,
+) -> float:
+    """Compute the total probability in the selected transverse K_perp domain.
+
+    The remaining transverse integration is performed in polar coordinates,
+
+        K_perp = K (cos phi_K, sin phi_K),
+        d^2 K_perp = K dK dphi_K.
+
+    The radial K integral is Gauss-Legendre. The angular integral is the
+    periodic trapezoidal rule.
+    """
+    accuracy = ACCURACY if accuracy is None else accuracy
+
+    b = np.asarray(impact_b, dtype=float)
+
+    if N1 is None:
+        N1 = normalization_constant(packet1, m=m, accuracy=accuracy)
+
+    if N2 is None:
+        N2 = normalization_constant(packet2, m=m, accuracy=accuracy)
+
+    K_nodes, K_weights = legendre_nodes_and_weights(
+        quadrature.K_perp_range,
+        quadrature.n_K_perp,
+    )
+
+    phi_nodes = np.linspace(0.0, 2.0 * PI, quadrature.n_K_phi, endpoint=False)
+    phi_weight = 2.0 * PI / quadrature.n_K_phi
+
+    total = 0.0
+
+    for K, w_K in zip(K_nodes, K_weights):
+        for phi_K in phi_nodes:
+            Kx = K * np.cos(phi_K)
+            Ky = K * np.sin(phi_K)
+
+            K_perp = np.array([Kx, Ky], dtype=float)
+
+            w_value = diff_probability(
+                K_perp,
+                packet1,
+                packet2,
+                quadrature,
+                impact_b=b,
+                N1=N1,
+                N2=N2,
+                m=m,
+                e_charge=e_charge,
+                accuracy=accuracy,
+                helicities=helicities,
+                explicit_spin_sum=explicit_spin_sum,
+            )
+
+            total += w_K * phi_weight * K * w_value
+
+    return float(total)
+
+
+def Ky_average(
+    packet1: LGPacket,
+    packet2: LGPacket,
+    quadrature: ProbabilityQuadrature,
+    *,
+    impact_b,
+    N1: float | None = None,
+    N2: float | None = None,
+    m: float = ELECTRON_MASS,
+    e_charge: float = ELECTRON_CHARGE,
+    accuracy: NumericalAccuracy | None = None,
+    helicities: Iterable[float] = (-0.5, 0.5),
+    explicit_spin_sum: bool = False,
+) -> float:
+    """Compute <K_y> in the selected transverse K_perp domain.
+
+    The implemented expression is
+
+        <K_y> =
+            int K_y w(K_perp) d^2 K_perp
+            /
+            int w(K_perp) d^2 K_perp.
+
+    The integration is performed in polar coordinates using the K_perp
+    quadrature parameters stored in ProbabilityQuadrature.
+    """
+    accuracy = ACCURACY if accuracy is None else accuracy
+
+    b = np.asarray(impact_b, dtype=float)
+
+    if N1 is None:
+        N1 = normalization_constant(packet1, m=m, accuracy=accuracy)
+
+    if N2 is None:
+        N2 = normalization_constant(packet2, m=m, accuracy=accuracy)
+
+    K_nodes, K_weights = legendre_nodes_and_weights(
+        quadrature.K_perp_range,
+        quadrature.n_K_perp,
+    )
+
+    phi_nodes = np.linspace(0.0, 2.0 * PI, quadrature.n_K_phi, endpoint=False)
+    phi_weight = 2.0 * PI / quadrature.n_K_phi
+
+    probability = 0.0
+    numerator = 0.0
+
+    for K, w_K in zip(K_nodes, K_weights):
+        for phi_K in phi_nodes:
+            Kx = K * np.cos(phi_K)
+            Ky = K * np.sin(phi_K)
+
+            K_perp = np.array([Kx, Ky], dtype=float)
+
+            w_value = diff_probability(
+                K_perp,
+                packet1,
+                packet2,
+                quadrature,
+                impact_b=b,
+                N1=N1,
+                N2=N2,
+                m=m,
+                e_charge=e_charge,
+                accuracy=accuracy,
+                helicities=helicities,
+                explicit_spin_sum=explicit_spin_sum,
+            )
+
+            weight = w_K * phi_weight * K
+
+            probability += weight * w_value
+            numerator += weight * Ky * w_value
+
+    return float(numerator / probability)
