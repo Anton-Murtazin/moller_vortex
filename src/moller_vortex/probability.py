@@ -18,7 +18,7 @@ import numpy as np
 from .accuracy import ACCURACY, NumericalAccuracy
 from .constants import ELECTRON_CHARGE, ELECTRON_MASS, PI
 from .packets import LGPacket, normalization_constant
-from .smatrix import S_impulse_closed_form
+from .smatrix import S_impulse_closed_form, S_impulse_first_order
 
 
 @dataclass(frozen=True)
@@ -48,16 +48,16 @@ class ProbabilityQuadrature:
         Number of uniformly spaced azimuthal nodes for the angle of K_perp.
     """
 
-    k3_perp_range: tuple[float, float]
-    k3z_range: tuple[float, float]
-    k4z_range: tuple[float, float]
-    K_perp_range: tuple[float, float]
-    n_k3_perp: int
-    n_phi: int
-    n_k3z: int
-    n_k4z: int
-    n_K_perp: int
-    n_K_phi: int
+    k3_perp_range: tuple[float, float] | None = None
+    k3z_range: tuple[float, float] | None = None
+    k4z_range: tuple[float, float] | None = None 
+    K_perp_range: tuple[float, float] | None = None
+    n_k3_perp: int | None = None
+    n_phi: int | None = None
+    n_k3z: int | None = None
+    n_k4z: int | None = None
+    n_K_perp: int | None = None
+    n_K_phi: int | None = None
 
 def legendre_nodes_and_weights(interval: tuple[float, float], n: int) -> tuple[np.ndarray, np.ndarray]:
     """Return Gauss-Legendre nodes and weights on a finite interval."""
@@ -69,6 +69,42 @@ def legendre_nodes_and_weights(interval: tuple[float, float], n: int) -> tuple[n
 
     return nodes, weights
 
+import numpy as np
+
+
+def boole_nodes_and_weights(interval, n):
+    """Composite Boole rule on a finite interval.
+
+    n is the number of nodes.
+    Requires n = 4*m + 1.
+    Recommended sequence: 5, 9, 17, 33, 65, ...
+    """
+    a, b = interval
+    n = int(n)
+
+    if n < 5:
+        raise ValueError("Composite Boole requires at least 5 nodes.")
+
+    n_intervals = n - 1
+
+    if n_intervals % 4 != 0:
+        raise ValueError("Composite Boole requires n - 1 divisible by 4.")
+
+    nodes = np.linspace(a, b, n)
+    h = (b - a) / n_intervals
+
+    weights = np.zeros(n, dtype=float)
+
+    for j in range(0, n_intervals, 4):
+        weights[j] += 7.0
+        weights[j + 1] += 32.0
+        weights[j + 2] += 12.0
+        weights[j + 3] += 32.0
+        weights[j + 4] += 7.0
+
+    weights *= 2.0 * h / 45.0
+
+    return nodes, weights
 
 def spin_averaged_s_abs2_impulse(
     k3: np.ndarray,
@@ -107,7 +143,7 @@ def spin_averaged_s_abs2_impulse(
         lam3 = lam1
         lam4 = lam2
 
-        S = S_impulse_closed_form(
+        S = S_impulse_first_order( # first order or closed form
             k3,
             k4,
             packet1,
@@ -132,7 +168,7 @@ def spin_averaged_s_abs2_impulse(
         for lam2 in helicities:
             for lam3 in helicities:
                 for lam4 in helicities:
-                    S = S_impulse_closed_form(
+                    S = S_impulse_first_order( # first order or closed form
                         k3,
                         k4,
                         packet1,
@@ -198,15 +234,15 @@ def diff_probability(
     if N2 is None:
         N2 = normalization_constant(packet2, m=m, accuracy=accuracy)
 
-    rho_nodes, rho_weights = legendre_nodes_and_weights(
+    rho_nodes, rho_weights = boole_nodes_and_weights( # boole or Legendre
         quadrature.k3_perp_range,
         quadrature.n_k3_perp,
     )
-    z3_nodes, z3_weights = legendre_nodes_and_weights(
+    z3_nodes, z3_weights = boole_nodes_and_weights( # boole or Legendre
         quadrature.k3z_range,
         quadrature.n_k3z,
     )
-    z4_nodes, z4_weights = legendre_nodes_and_weights(
+    z4_nodes, z4_weights = boole_nodes_and_weights( # boole or Legendre
         quadrature.k4z_range,
         quadrature.n_k4z,
     )
