@@ -261,39 +261,31 @@ def S_impulse_first_order(
     impact_b=(0.0, 0.0),
     N1: float | None = None,
     N2: float | None = None,
+    time_mode: str = "resummed",
     time_step: float | None = None,
     time_step_scale: float = 1.0e-4,
-    accuracy: NumericalAccuracy | None = None,
+    accuracy=None,
     return_details: bool = False,
 ) -> complex | tuple[complex, dict]:
     """S-matrix beyond strict impulse approximation.
 
-    The function replaces the strict impulse longitudinal-time factor by the
-    beyond-impulse time block while keeping all global constants consistent
-    with S_impulse_closed_form.
+    Parameters
+    ----------
+    time_mode:
+        "resummed" keeps the longitudinal exponential factor
 
-    The formula is organized as
+            exp(-b Omega^2 / c^2 - d Omega / c).
 
-        S = prefactor * exp(Xi0_beyond) * L_beyond[I_perp(t)].
+        "expanded" uses the strictly expanded first-order expression
 
-    The transverse integral is evaluated with
+            I0
+            + (2 Omega a / c^2 - Omega^2 b / c^2 - Omega d / c) I0
+            + i(2 Omega b / c^2 - 2a / c^2 + d / c) I1
+            + b / c^2 I2.
 
-        alpha(t) = alpha0 - i t / eps1,
-        beta(t)  = beta0,
-        gamma(t) = gamma0 - i t / eps2.
-
-    The longitudinal sign convention is fixed by the requirement that the
-    old impulse result is recovered when
-
-        b_long -> 0,
-        gamma_i^{-2} -> 0,
-        I_perp(t) -> I_perp(0).
-
-    In that limit this function gives
-
-        exp(Omega_IA * A_long / (v1 - v2)) / |v1 - v2|,
-
-    exactly as S_impulse_closed_form does.
+    accuracy:
+        Accepted for compatibility with probability-level callers.
+        It is not used in this closed-form implementation.
     """
 
     common_factor, details = S_impulse_common_factor(
@@ -310,14 +302,12 @@ def S_impulse_first_order(
         impact_b=impact_b,
         N1=N1,
         N2=N2,
-        accuracy=accuracy,
     )
 
     if "reason" in details:
         return (common_factor, details) if return_details else common_factor
 
     k3 = vec3(k3)
-    k4 = vec3(k4)
     b_perp = vec2(impact_b)
 
     k3_perp = k3[:2]
@@ -329,21 +319,11 @@ def S_impulse_first_order(
     gamma1 = eps1 / m
     gamma2 = eps2 / m
 
-    DeltaKz = details["DeltaKz"]
+    delta_kz = details["DeltaKz"]
 
-    s2z = packet2.sigma_par
-
-    # Beyond-impulse constant exponent.
-    # This term must not be inserted into strict impulse approximation.
-    Xi0_beyond = (
-        details["Xi0"]
-        - DeltaKz * DeltaKz / (2.0 * s2z * s2z * gamma2 * gamma2)
-    )
-
-    # Longitudinal parameters beyond strict impulse approximation.
     Omega = (
         details["Omega_long"]
-        + DeltaKz * DeltaKz / (2.0 * eps2 * gamma2 * gamma2)
+        + delta_kz * delta_kz / (2.0 * eps2 * gamma2 * gamma2)
     )
 
     a_long = 0.5 * (
@@ -352,39 +332,26 @@ def S_impulse_first_order(
     )
 
     b_long = (
-        eps1
-        / (2.0 * packet1.sigma_par * packet1.sigma_par)
-        * 1.0
-        / (eps1 * gamma1 * gamma1)
-        +
-        eps2
-        / (2.0 * packet2.sigma_par * packet2.sigma_par)
-        * 1.0
-        / (eps2 * gamma2 * gamma2)
+        1.0 / (2.0 * packet1.sigma_par * packet1.sigma_par * gamma1 * gamma1)
+        + 1.0 / (2.0 * packet2.sigma_par * packet2.sigma_par * gamma2 * gamma2)
     )
 
     c_long = (
         details["v1"]
         - details["v2"]
-        - DeltaKz / (eps2 * gamma2 * gamma2)
+        - delta_kz / (eps2 * gamma2 * gamma2)
     )
 
-    # This is the linear coefficient appearing in the longitudinal Gaussian.
-    # The time-kernel sign is chosen below so that the old impulse limit is
-    # recovered with exp(+Omega_IA * A_long / c0).
-    d_linear = (
+    d_long = (
         details["A_long"]
-        + DeltaKz / (packet2.sigma_par * packet2.sigma_par * gamma2 * gamma2)
+        + delta_kz / (packet2.sigma_par * packet2.sigma_par * gamma2 * gamma2)
     )
-
-    # Effective d entering the Gaussian time kernel.
-    d_time = -d_linear
 
     alpha0 = details["alpha"]
     beta0 = details["beta"]
     gamma0 = details["gamma"]
 
-    def I_perp_at_time(t):
+    def transverse_integral_at_time(t):
         alpha_t = alpha0 - 1j * t / eps1
         gamma_t = gamma0 - 1j * t / eps2
 
@@ -410,11 +377,11 @@ def S_impulse_first_order(
 
         time_step = time_step_scale * min(time_scale_A, time_scale_gamma)
 
-    I_m2 = I_perp_at_time(-2.0 * time_step)
-    I_m1 = I_perp_at_time(-1.0 * time_step)
-    I0 = I_perp_at_time(0.0)
-    I_p1 = I_perp_at_time(+1.0 * time_step)
-    I_p2 = I_perp_at_time(+2.0 * time_step)
+    I_m2 = transverse_integral_at_time(-2.0 * time_step)
+    I_m1 = transverse_integral_at_time(-1.0 * time_step)
+    I0 = transverse_integral_at_time(0.0)
+    I_p1 = transverse_integral_at_time(+1.0 * time_step)
+    I_p2 = transverse_integral_at_time(+2.0 * time_step)
 
     I1 = (
         -I_p2
@@ -433,70 +400,106 @@ def S_impulse_first_order(
 
     c2 = c_long * c_long
 
-    # Longitudinal Gaussian factor.
-    # With d_time = -d_linear this reproduces the old impulse factor:
-    # exp(+Omega_IA * A_long / c0) / |c0|.
-    longitudinal_exponent = (
-        -b_long * Omega * Omega / c2
-        -d_time * Omega / c_long
-    )
-
-    longitudinal_factor = np.exp(longitudinal_exponent) / abs(c_long)
-
-    # Moments of the Gaussian time kernel for the transverse Taylor expansion.
-    q_time = (
-        2.0 * b_long * Omega / c2
-        + d_time / c_long
-    )
-
-    transverse_time_bracket = (
-        I0
-        + 1j * q_time * I1
-        + (
-            b_long / c2
-            - 0.5 * q_time * q_time
+    if time_mode == "expanded":
+        time_block = (
+            2.0
+            * np.sqrt(np.pi)
+            / c_long
+            * (
+                I0
+                + (
+                    2.0 * Omega * a_long / c2
+                    - Omega * Omega * b_long / c2
+                    - Omega * d_long / c_long
+                )
+                * I0
+                + 1j
+                * (
+                    2.0 * Omega * b_long / c2
+                    - 2.0 * a_long / c2
+                    + d_long / c_long
+                )
+                * I1
+                + b_long * I2 / c2
+            )
         )
-        * I2
-        + 2.0 * a_long * Omega * I0 / c2
-        - 2.0j * a_long * I1 / c2
+
+        longitudinal_exponent = None
+        longitudinal_factor = None
+        q_time = None
+        transverse_time_bracket = None
+
+    elif time_mode == "resummed":
+        longitudinal_exponent = (
+            -b_long * Omega * Omega / c2
+            -d_long * Omega / c_long
+        )
+
+        longitudinal_factor = (
+            2.0
+            * np.sqrt(np.pi)
+            / c_long
+            * np.exp(longitudinal_exponent)
+        )
+
+        q_time = (
+            2.0 * b_long * Omega / c2
+            + d_long / c_long
+        )
+
+        transverse_time_bracket = (
+            I0
+            + 1j * q_time * I1
+            + (
+                b_long / c2
+                - 0.5 * q_time * q_time
+            )
+            * I2
+            + 2.0 * a_long * Omega * I0 / c2
+            - 2.0j * a_long * I1 / c2
+        )
+
+        time_block = longitudinal_factor * transverse_time_bracket
+
+    else:
+        raise ValueError("time_mode must be either 'resummed' or 'expanded'.")
+
+    xi0_localization = (
+    -delta_kz * delta_kz
+    / (2.0 * packet2.sigma_par * packet2.sigma_par * gamma2 * gamma2)
     )
 
-    S = (
-        details["prefactor"]
-        * np.exp(Xi0_beyond)
-        * longitudinal_factor
-        * transverse_time_bracket
-    )
+    base_factor = details["prefactor"] * np.exp(details["Xi0"] + xi0_localization)
+
+    S = base_factor * time_block
 
     if return_details:
         details.update(
             dict(
-                Xi0_impulse=details["Xi0"],
-                Xi0_beyond=Xi0_beyond,
-                Xi0_beyond_extra=Xi0_beyond - details["Xi0"],
+                time_mode=time_mode,
+                gamma1_first=gamma1,
+                gamma2_first=gamma2,
                 Omega_first=Omega,
                 a_long_first=a_long,
                 b_long_first=b_long,
                 c_long_first=c_long,
-                d_linear_first=d_linear,
-                d_time_first=d_time,
-                alpha0=alpha0,
-                beta0=beta0,
-                gamma0=gamma0,
+                d_long_first=d_long,
                 time_step=time_step,
                 I0=I0,
                 I1=I1,
                 I2=I2,
-                q_time=q_time,
                 longitudinal_exponent=longitudinal_exponent,
                 longitudinal_factor=longitudinal_factor,
+                q_time=q_time,
                 transverse_time_bracket=transverse_time_bracket,
+                time_block=time_block,
+                base_factor=base_factor,
                 S_first_order=S,
             )
         )
         return S, details
 
-    return S
+    return complex(S)
 
 
 def S_impulse_numeric_transverse_quad(
