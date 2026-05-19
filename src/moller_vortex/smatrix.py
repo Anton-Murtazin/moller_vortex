@@ -469,7 +469,7 @@ def S_impulse_first_order(
     / (2.0 * packet2.sigma_par * packet2.sigma_par * gamma2 * gamma2)
     )
 
-    base_factor = details["prefactor"] * np.exp(details["Xi0"] + xi0_localization)
+    base_factor = details["prefactor"] / (2.0 * np.sqrt(np.pi)) * np.exp(details["Xi0"] + xi0_localization)
 
     S = base_factor * time_block
 
@@ -499,7 +499,7 @@ def S_impulse_first_order(
         )
         return S, details
 
-    return complex(S)
+    return S
 
 
 def S_impulse_numeric_transverse_quad(
