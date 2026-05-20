@@ -56,36 +56,53 @@ def impulse_parameters(
     s2p = packet2.sigma_perp
     s2z = packet2.sigma_par
 
+    inv_s1p2 = 1.0 / (s1p * s1p)
+    inv_s2p2 = 1.0 / (s2p * s2p)
+    inv_s2z2 = 1.0 / (s2z * s2z)
+
     Xi0 = (
-        (m * m + eps1 * eps1 - packet1.kbar_z ** 2) / (2.0 * s1z ** 2)
-        + (m * m + eps2 * eps2 + K_vec_sq - (Kz - packet2.kbar_z) ** 2) / (2.0 * s2z ** 2)
-        - K_perp_sq / (2.0 * s2p ** 2)
+        0.5 * K_perp_sq * (inv_s2z2 - inv_s2p2)
         + 1j * np.dot(b, K_perp)
-        - eps1 * eps1 / s1z ** 2
-        - eps2 * eps2 / s2z ** 2
-        + packet1.kbar_z * (packet1.kbar_z / s1z ** 2 - packet2.kbar_z / s2z ** 2)
-        - eps2 * v2 * DeltaKz / s2z ** 2
     )
 
-    A_long = (
-        packet1.kbar_z / s1z ** 2
-        - packet2.kbar_z / s2z ** 2
-        - v1 * eps1 / s1z ** 2
-        + v2 * eps2 / s2z ** 2
-    )
+    A_long = 0.0
 
     Omega_long = eps1 + eps2 - E_K + v2 * DeltaKz
 
-    alpha = -(
-        1.0 / s1z ** 2
-        + 1.0 / s2z ** 2
-        - 1.0 / s1p ** 2
-        - 1.0 / s2p ** 2
-        - eps1 / (eps1 * s1z ** 2)
-    )
+    alpha = inv_s1p2 + inv_s2p2 - inv_s2z2
+    beta = inv_s2p2 - inv_s2z2
+    gamma = inv_s2z2
 
-    beta = 1.0 / s2p ** 2 - 1.0 / s2z ** 2
-    gamma = eps2 / (eps2 * s2z ** 2)
+    # Xi0 = (
+    #     (m * m + eps1 * eps1 - packet1.kbar_z ** 2) / (2.0 * s1z ** 2)
+    #     + (m * m + eps2 * eps2 + K_vec_sq - (Kz - packet2.kbar_z) ** 2) / (2.0 * s2z ** 2)
+    #     - K_perp_sq / (2.0 * s2p ** 2)
+    #     + 1j * np.dot(b, K_perp)
+    #     - eps1 * eps1 / s1z ** 2
+    #     - eps2 * eps2 / s2z ** 2
+    #     + packet1.kbar_z * (packet1.kbar_z / s1z ** 2 - packet2.kbar_z / s2z ** 2)
+    #     - eps2 * v2 * DeltaKz / s2z ** 2
+    # )
+
+    # A_long = (
+    #     packet1.kbar_z / s1z ** 2
+    #     - packet2.kbar_z / s2z ** 2
+    #     - v1 * eps1 / s1z ** 2
+    #     + v2 * eps2 / s2z ** 2
+    # )
+
+    # Omega_long = eps1 + eps2 - E_K + v2 * DeltaKz
+
+    # alpha = -(
+    #     1.0 / s1z ** 2
+    #     + 1.0 / s2z ** 2
+    #     - 1.0 / s1p ** 2
+    #     - 1.0 / s2p ** 2
+    #     - eps1 / (eps1 * s1z ** 2)
+    # )
+
+    # beta = 1.0 / s2p ** 2 - 1.0 / s2z ** 2
+    # gamma = eps2 / (eps2 * s2z ** 2)
 
     return dict(
         K_vec=K_vec,
