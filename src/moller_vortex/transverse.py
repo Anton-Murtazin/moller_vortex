@@ -5,13 +5,25 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from .accuracy import ACCURACY, NumericalAccuracy
-from .constants import COMPLEX_DTYPE, FLOAT_DTYPE, PI
+from .accuracy import NumericalAccuracy, resolve_accuracy
+from .constants import PI, complex_array, real_array
 from .kinematics import vec2
 
 
 def laguerre_derivative(a: int, b: int, c1: complex, c2: complex, c12: complex) -> complex:
     """Return d_t1^a d_t2^b exp(c1*t1 + c2*t2 - c12*t1*t2) at zero.
+
+    Parameters
+    ----------
+    a, b:
+        Non-negative derivative orders.
+    c1, c2, c12:
+        Coefficients in the generating exponential.
+
+    Returns
+    -------
+    complex
+        The differentiated generating function at ``t1 = t2 = 0``.
 
     The formula is
 
@@ -34,6 +46,22 @@ def laguerre_derivative(a: int, b: int, c1: complex, c2: complex, c12: complex) 
         raise ZeroDivisionError("c12 must be non-zero in the Laguerre representation.")
 
     def associated_laguerre(n: int, k: int, x: complex) -> complex:
+        """Return the associated Laguerre polynomial by finite summation.
+
+        Parameters
+        ----------
+        n:
+            Non-negative polynomial order.
+        k:
+            Non-negative associated index.
+        x:
+            Real or complex polynomial argument.
+
+        Returns
+        -------
+        complex
+            Value of ``L_n^k(x)``.
+        """
         value = 0.0 + 0.0j
         for s in range(n + 1):
             binom = math.factorial(n + k) / (
@@ -62,6 +90,18 @@ def laguerre_derivative(a: int, b: int, c1: complex, c2: complex, c12: complex) 
 
 def laguerre_derivative_sum(a: int, b: int, c1: complex, c2: complex, c12: complex) -> complex:
     """Direct finite-sum version of ``laguerre_derivative``.
+
+    Parameters
+    ----------
+    a, b:
+        Non-negative derivative orders.
+    c1, c2, c12:
+        Coefficients in the generating exponential.
+
+    Returns
+    -------
+    complex
+        Direct finite-sum value of the derivative.
 
     This is useful for diagnostics because it follows immediately from the
     Taylor expansion of exp(c1*t1 + c2*t2 - c12*t1*t2) and does not use
@@ -94,6 +134,26 @@ def transverse_integral_explicit(
 ) -> complex | tuple[complex, str]:
     """Closed first-order transverse integral.
 
+    Parameters
+    ----------
+    ell1, ell2:
+        Incoming packet OAM integers.
+    k3_perp:
+        Transverse momentum of final particle 3.
+    K_perp:
+        Total final transverse momentum.
+    b_perp:
+        Transverse impact parameter.
+    alpha, beta, gamma:
+        Transverse Gaussian coefficients.
+    return_case:
+        If True, also return the branch name used for the OAM case.
+
+    Returns
+    -------
+    complex or tuple[complex, str]
+        Analytic transverse integral, optionally with the selected case label.
+
     The integral is evaluated for the first-order expansion
 
         1/|k3_perp-k_perp|^2 = 1/k3^2 [1 + exp(-i phi3) k_+/k3
@@ -111,8 +171,8 @@ def transverse_integral_explicit(
     if k3_abs == 0.0:
         raise ZeroDivisionError("The expanded transverse denominator requires k3_perp != 0.")
 
-    K = np.array([K_real[0], K_real[1]], dtype=COMPLEX_DTYPE)
-    b = np.array([b_real[0], b_real[1]], dtype=COMPLEX_DTYPE)
+    K = complex_array([K_real[0], K_real[1]], shape=(2,))
+    b = complex_array([b_real[0], b_real[1]], shape=(2,))
 
     A = alpha + gamma
     if A == 0.0:
@@ -237,7 +297,21 @@ def transverse_integral_explicit(
 
 
 def vortex_factor(z: complex, ell: int) -> complex:
-    """Return z^ell for ell>0, conjugate(z)^|ell| for ell<0, and 1 for ell=0."""
+    """Return the Cartesian vortex monomial.
+
+    Parameters
+    ----------
+    z:
+        Complex transverse coordinate ``kx + i ky``.
+    ell:
+        OAM integer.
+
+    Returns
+    -------
+    complex
+        ``z**ell`` for positive OAM, ``conjugate(z)**abs(ell)`` for negative
+        OAM, and ``1`` for zero OAM.
+    """
     if ell > 0:
         return z ** ell
     if ell < 0:
@@ -257,10 +331,30 @@ def transverse_integral_numeric_quad(
     n_phi: int = 64,
     accuracy: NumericalAccuracy | None = None,
 ) -> complex:
-    """Direct polar numerical check of the same first-order transverse integral."""
+    """Numerically integrate the first-order transverse integral.
+
+    Parameters
+    ----------
+    ell1, ell2:
+        Incoming packet OAM integers.
+    k3_perp, K_perp, b_perp:
+        Transverse vectors used in the analytic integral.
+    alpha, beta, gamma:
+        Transverse Gaussian coefficients.
+    n_phi:
+        Number of azimuthal trapezoid nodes.
+    accuracy:
+        Adaptive radial integration accuracy.
+
+    Returns
+    -------
+    complex
+        Direct polar quadrature value for comparison with
+        ``transverse_integral_explicit``.
+    """
     from scipy.integrate import quad
 
-    accuracy = ACCURACY if accuracy is None else accuracy
+    accuracy = resolve_accuracy(accuracy)
 
     k3p = vec2(k3_perp)
     Kp = vec2(K_perp)
@@ -284,7 +378,19 @@ def transverse_integral_numeric_quad(
         sin_phi = np.sin(phi)
 
         def radial_integrand(r: float) -> complex:
-            k = np.array([r * cos_phi, r * sin_phi], dtype=FLOAT_DTYPE)
+            """Return the radial integrand for one fixed polar angle.
+
+            Parameters
+            ----------
+            r:
+                Transverse radial momentum.
+
+            Returns
+            -------
+            complex
+                Integrand value including the polar measure factor.
+            """
+            k = real_array([r * cos_phi, r * sin_phi], shape=(2,))
             K_minus_k = Kp - k
 
             z1 = k[0] + 1j * k[1]
@@ -312,18 +418,14 @@ def transverse_integral_numeric_quad(
             lambda r: np.real(radial_integrand(r)),
             0.0,
             np.inf,
-            epsabs=accuracy.quad_epsabs,
-            epsrel=accuracy.quad_epsrel,
-            limit=accuracy.quad_limit,
+            **accuracy.quad_kwargs(),
         )[0]
 
         imag_part = quad(
             lambda r: np.imag(radial_integrand(r)),
             0.0,
             np.inf,
-            epsabs=accuracy.quad_epsabs,
-            epsrel=accuracy.quad_epsrel,
-            limit=accuracy.quad_limit,
+            **accuracy.quad_kwargs(),
         )[0]
 
         total += dphi * (real_part + 1j * imag_part)

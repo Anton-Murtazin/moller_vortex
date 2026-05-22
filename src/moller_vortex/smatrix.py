@@ -7,12 +7,113 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .accuracy import ACCURACY, NumericalAccuracy
-from .constants import ELECTRON_CHARGE, ELECTRON_MASS, PI
+from .accuracy import NumericalAccuracy, resolve_accuracy
+from .constants import (
+    ELECTRON_CHARGE,
+    ELECTRON_MASS,
+    FLOAT_DTYPE,
+    PI,
+    complex_zero,
+    real_array,
+)
 from .kinematics import energy, helicity, kron_delta, vec2, vec3
-from .packets import LGPacket, central_energy, normalization_constant
+from .packets import LGPacket, central_energy, resolve_normalizations
 from .transverse import transverse_integral_explicit, transverse_integral_numeric_quad
-from .quadrature import nodes_and_weights
+from .quadrature import ExactTimeQuadrature, exact_time_nodes
+
+
+def _helicity_conserving(lam1: float, lam2: float, lam3: float, lam4: float) -> bool:
+    """Return whether the helicity channel is conserved.
+
+    Parameters
+    ----------
+    lam1, lam2, lam3, lam4:
+        Incoming and outgoing helicity labels.
+
+    Returns
+    -------
+    bool
+        True when ``lam3 == lam1`` and ``lam4 == lam2``.
+    """
+    return bool(
+        kron_delta(helicity(lam3), helicity(lam1))
+        and kron_delta(helicity(lam4), helicity(lam2))
+    )
+
+
+def _packet_denominator(packet1: LGPacket, packet2: LGPacket) -> float:
+    """Return sigma and factorial factors from the two LG packets.
+
+    Parameters
+    ----------
+    packet1, packet2:
+        Incoming wave packets.
+
+    Returns
+    -------
+    float
+        Product of transverse-width powers and factorial square root.
+    """
+    L1 = abs(packet1.ell)
+    L2 = abs(packet2.ell)
+    return (
+        packet1.sigma_perp ** L1
+        * packet2.sigma_perp ** L2
+        * np.sqrt(math.factorial(L1) * math.factorial(L2))
+    )
+
+
+def _mode(value: str, allowed: tuple[str, ...], name: str) -> str:
+    """Validate a public string selector.
+
+    Parameters
+    ----------
+    value:
+        User-provided selector.
+    allowed:
+        Allowed selector values.
+    name:
+        Selector name for error messages.
+
+    Returns
+    -------
+    str
+        The validated selector.
+    """
+    if value not in allowed:
+        allowed_text = ", ".join(repr(item) for item in allowed)
+        raise ValueError(f"{name} must be one of {allowed_text}.")
+    return value
+
+
+@dataclass(frozen=True)
+class FirstOrderLongitudinal:
+    """Longitudinal parameters entering the first-order time block.
+
+    Parameters
+    ----------
+    gamma1, gamma2:
+        Lorentz factors for the incoming packet central energies.
+    delta_kz:
+        Longitudinal total-momentum mismatch.
+    Omega, a, b, c, d:
+        Scalars appearing in the first-order time-kernel formulas.
+
+    Returns
+    -------
+    FirstOrderLongitudinal
+        Immutable container for the longitudinal part of the first-order
+        correction.
+    """
+
+    gamma1: float
+    gamma2: float
+    delta_kz: float
+    Omega: float
+    a: float
+    b: float
+    c: float
+    d: float
 
 
 def impulse_parameters(
@@ -23,7 +124,24 @@ def impulse_parameters(
     impact_b,
     m: float = ELECTRON_MASS,
 ) -> dict:
-    """Return scalar parameters used by the closed impulse S-matrix formula.
+    """Return scalar parameters used by S-matrix formulas.
+
+    Parameters
+    ----------
+    packet1, packet2:
+        Incoming wave packets.
+    k3, k4:
+        Final three-momenta.
+    impact_b:
+        Transverse impact parameter.
+    m:
+        Particle mass.
+
+    Returns
+    -------
+    dict
+        Kinematic quantities, transverse Gaussian coefficients and
+        longitudinal impulse parameters.
 
     Only ``Xi0`` is algebraically shortened.  The transverse parameters
     ``alpha``, ``beta`` and ``gamma`` are intentionally kept in the original
@@ -70,7 +188,7 @@ def impulse_parameters(
         + 1j * np.dot(b, K_perp)
     )
 
-    A_long = np.float64(0.0)
+    A_long = FLOAT_DTYPE(0.0)
 
     Omega_long = eps1 + eps2 - E_K + v2 * DeltaKz
 
@@ -119,32 +237,48 @@ def S_impulse_common_factor(
     N2: float | None = None,
     accuracy: NumericalAccuracy | None = None,
 ) -> tuple[complex, dict]:
-    """Common factor multiplying the transverse integral in S_impulse_closed_form."""
+    """Return the common prefactor outside the transverse integral.
+
+    Parameters
+    ----------
+    k3, k4:
+        Final three-momenta.
+    packet1, packet2:
+        Incoming wave packets.
+    lam1, lam2, lam3, lam4:
+        Helicity labels.
+    m, e_charge:
+        Particle mass and electric charge.
+    impact_b:
+        Transverse impact parameter.
+    N1, N2:
+        Optional precomputed packet normalizations.
+    accuracy:
+        Numerical accuracy configuration for missing normalization constants.
+
+    Returns
+    -------
+    tuple[complex, dict]
+        Common complex factor and diagnostic details.
+    """
     packet1 = packet1.checked()
     packet2 = packet2.checked()
 
-    helicity_conserving = kron_delta(helicity(lam3), helicity(lam1)) and kron_delta(
-        helicity(lam4), helicity(lam2)
-    )
-    if not helicity_conserving:
-        return np.complex128(0.0), {"reason": "helicity delta is zero"}
+    if not _helicity_conserving(lam1, lam2, lam3, lam4):
+        return complex_zero(), {"reason": "helicity delta is zero"}
 
     b = vec2(impact_b)
-    accuracy = ACCURACY if accuracy is None else accuracy
-
-    N1 = normalization_constant(packet1, m, accuracy=accuracy) if N1 is None else N1
-    N2 = normalization_constant(packet2, m, accuracy=accuracy) if N2 is None else N2
+    accuracy = resolve_accuracy(accuracy)
+    N1, N2 = resolve_normalizations(
+        packet1,
+        packet2,
+        N1=N1,
+        N2=N2,
+        m=m,
+        accuracy=accuracy,
+    )
 
     pars = impulse_parameters(packet1, packet2, k3, k4, b, m)
-
-    L1 = abs(packet1.ell)
-    L2 = abs(packet2.ell)
-
-    packet_denominator = (
-        packet1.sigma_perp ** L1
-        * packet2.sigma_perp ** L2
-        * np.sqrt(math.factorial(L1) * math.factorial(L2))
-    )
 
     prefactor = (
         -2j
@@ -153,7 +287,7 @@ def S_impulse_common_factor(
         * np.sqrt(pars["E3"] * pars["E4"] / (pars["eps1"] * pars["eps2"]))
         * N1
         * N2
-        / packet_denominator
+        / _packet_denominator(packet1, packet2)
     )
 
     longitudinal_factor = (
@@ -196,7 +330,32 @@ def S_impulse_closed_form(
     accuracy: NumericalAccuracy | None = None,
     return_details: bool = False,
 ) -> complex | tuple[complex, dict]:
-    """Closed impulse-approximation S-matrix using the analytic transverse integral."""
+    """Compute the closed impulse S-matrix with analytic transverse integral.
+
+    Parameters
+    ----------
+    k3, k4:
+        Final three-momenta.
+    packet1, packet2:
+        Incoming wave packets.
+    lam1, lam2, lam3, lam4:
+        Helicity labels.
+    m, e_charge:
+        Particle mass and electric charge.
+    impact_b:
+        Transverse impact parameter.
+    N1, N2:
+        Optional precomputed packet normalizations.
+    accuracy:
+        Numerical accuracy configuration.
+    return_details:
+        If True, return ``(S, details)``.
+
+    Returns
+    -------
+    complex or tuple[complex, dict]
+        S-matrix value, optionally with diagnostic details.
+    """
     common_factor, details = S_impulse_common_factor(
         k3,
         k4,
@@ -242,79 +401,32 @@ def S_impulse_closed_form(
 
 
 
-def S_impulse_first_order(
-    k3,
-    k4,
+def _first_order_longitudinal_parameters(
     packet1: LGPacket,
     packet2: LGPacket,
-    lam1: float,
-    lam2: float,
-    lam3: float,
-    lam4: float,
-    m: float = ELECTRON_MASS,
-    e_charge: float = ELECTRON_CHARGE,
-    impact_b=(0.0, 0.0),
-    N1: float | None = None,
-    N2: float | None = None,
-    time_mode: str = "resummed",
-    time_step: float | None = None,
-    time_step_scale: float = 1.0e-4,
-    accuracy=None,
-    return_details: bool = False,
-) -> complex | tuple[complex, dict]:
-    """S-matrix beyond strict impulse approximation.
+    details: dict,
+    m: float,
+) -> FirstOrderLongitudinal:
+    """Return the longitudinal scalars used by ``S_impulse_first_order``.
 
     Parameters
     ----------
-    time_mode:
-        "resummed" keeps the longitudinal exponential factor
+    packet1, packet2:
+        Incoming wave packets.
+    details:
+        Dictionary produced by ``S_impulse_common_factor``.
+    m:
+        Particle mass.
 
-            exp(-b Omega^2 / c^2 - d Omega / c).
-
-        "expanded" uses the strictly expanded first-order expression
-
-            I0
-            + (2 Omega a / c^2 - Omega^2 b / c^2 - Omega d / c) I0
-            + i(2 Omega b / c^2 - 2a / c^2 + d / c) I1
-            + b / c^2 I2.
-
-    accuracy:
-        Accepted for compatibility with probability-level callers.
-        It is not used in this closed-form implementation.
+    Returns
+    -------
+    FirstOrderLongitudinal
+        Grouped longitudinal parameters for the first-order time block.
     """
-
-    common_factor, details = S_impulse_common_factor(
-        k3,
-        k4,
-        packet1,
-        packet2,
-        lam1,
-        lam2,
-        lam3,
-        lam4,
-        m=m,
-        e_charge=e_charge,
-        impact_b=impact_b,
-        N1=N1,
-        N2=N2,
-        accuracy=accuracy,
-    )
-
-    if "reason" in details:
-        return (common_factor, details) if return_details else common_factor
-
-    k3 = vec3(k3)
-    b_perp = vec2(impact_b)
-
-    k3_perp = k3[:2]
-    K_perp = details["K_perp"]
-
     eps1 = details["eps1"]
     eps2 = details["eps2"]
-
     gamma1 = eps1 / m
     gamma2 = eps2 / m
-
     delta_kz = details["DeltaKz"]
 
     Omega = (
@@ -343,51 +455,77 @@ def S_impulse_first_order(
         + delta_kz / (packet2.sigma_par * packet2.sigma_par * gamma2 * gamma2)
     )
 
-    alpha0 = details["alpha"]
-    beta0 = details["beta"]
-    gamma0 = details["gamma"]
+    return FirstOrderLongitudinal(
+        gamma1=gamma1,
+        gamma2=gamma2,
+        delta_kz=delta_kz,
+        Omega=Omega,
+        a=a_long,
+        b=b_long,
+        c=c_long,
+        d=d_long,
+    )
 
-    def transverse_integral_at_time(t):
-        alpha_t = alpha0 - 1j * t / eps1
-        gamma_t = gamma0 - 1j * t / eps2
 
-        return transverse_integral_explicit(
-            packet1.ell,
-            packet2.ell,
-            k3_perp,
-            K_perp,
-            b_perp,
-            alpha_t,
-            beta0,
-            gamma_t,
-        )
+def _automatic_time_step(
+    alpha0: complex,
+    gamma0: complex,
+    eps1: float,
+    eps2: float,
+    time_step_scale: float,
+) -> float:
+    """Choose the finite-difference step from transverse-coefficient scales.
 
-    if time_step is None:
-        A0 = alpha0 + gamma0
+    Parameters
+    ----------
+    alpha0, gamma0:
+        Time-zero transverse Gaussian coefficients.
+    eps1, eps2:
+        Central energies of incoming packets.
+    time_step_scale:
+        Dimensionless multiplier for the natural time scale.
 
-        A_dot_abs = abs(1.0 / eps1 + 1.0 / eps2)
-        gamma_dot_abs = abs(1.0 / eps2)
+    Returns
+    -------
+    float
+        Finite-difference step.
+    """
+    A0 = alpha0 + gamma0
+    A_dot_abs = abs(1.0 / eps1 + 1.0 / eps2)
+    gamma_dot_abs = abs(1.0 / eps2)
 
-        time_scale_A = abs(A0) / A_dot_abs
-        if gamma0 == 0:
-            time_scale_gamma = np.inf
-        else:
-            time_scale_gamma = abs(gamma0) / gamma_dot_abs
+    time_scale_A = abs(A0) / A_dot_abs
+    if gamma0 == 0:
+        time_scale_gamma = np.inf
+    else:
+        time_scale_gamma = abs(gamma0) / gamma_dot_abs
 
-        time_step = time_step_scale * min(time_scale_A, time_scale_gamma)
+    return time_step_scale * min(time_scale_A, time_scale_gamma)
 
-    I_m2 = transverse_integral_at_time(-2.0 * time_step)
-    I_m1 = transverse_integral_at_time(-1.0 * time_step)
-    I0 = transverse_integral_at_time(0.0)
-    I_p1 = transverse_integral_at_time(+1.0 * time_step)
-    I_p2 = transverse_integral_at_time(+2.0 * time_step)
+
+def _five_point_time_derivatives(values: tuple[complex, complex, complex, complex, complex], h: float):
+    """Return ``I0``, ``I1`` and ``I2`` from five time samples.
+
+    Parameters
+    ----------
+    values:
+        Transverse integral samples at ``-2h``, ``-h``, ``0``, ``h``, ``2h``.
+    h:
+        Time step.
+
+    Returns
+    -------
+    tuple[complex, complex, complex]
+        Integral value and first two time derivatives at zero.
+    """
+    I_m2, I_m1, I0, I_p1, I_p2 = values
 
     I1 = (
         -I_p2
         + 8.0 * I_p1
         - 8.0 * I_m1
         + I_m2
-    ) / (12.0 * time_step)
+    ) / (12.0 * h)
 
     I2 = (
         -I_p2
@@ -395,11 +533,44 @@ def S_impulse_first_order(
         - 30.0 * I0
         + 16.0 * I_m1
         - I_m2
-    ) / (12.0 * time_step * time_step)
+    ) / (12.0 * h * h)
 
+    return I0, I1, I2
+
+
+def _first_order_time_block(
+    mode: str,
+    longitudinal: FirstOrderLongitudinal,
+    I0: complex,
+    I1: complex,
+    I2: complex,
+) -> tuple[complex, dict]:
+    """Assemble the expanded or resummed first-order time block.
+
+    Parameters
+    ----------
+    mode:
+        ``"expanded"`` or ``"resummed"``.
+    longitudinal:
+        Longitudinal first-order parameters.
+    I0, I1, I2:
+        Transverse integral and its first two time derivatives at zero.
+
+    Returns
+    -------
+    tuple[complex, dict]
+        Time block and intermediate diagnostic values.
+    """
+    mode = _mode(mode, ("resummed", "expanded"), "time_mode")
+
+    Omega = longitudinal.Omega
+    a_long = longitudinal.a
+    b_long = longitudinal.b
+    c_long = longitudinal.c
+    d_long = longitudinal.d
     c2 = c_long * c_long
 
-    if time_mode == "expanded":
+    if mode == "expanded":
         time_block = (
             2.0
             * np.sqrt(np.pi)
@@ -423,52 +594,207 @@ def S_impulse_first_order(
             )
         )
 
-        longitudinal_exponent = None
-        longitudinal_factor = None
-        q_time = None
-        transverse_time_bracket = None
-
-    elif time_mode == "resummed":
-        longitudinal_exponent = (
-            -b_long * Omega * Omega / c2
-            -d_long * Omega / c_long
+        return time_block, dict(
+            longitudinal_exponent=None,
+            longitudinal_factor=None,
+            q_time=None,
+            transverse_time_bracket=None,
         )
 
-        longitudinal_factor = (
-            2.0
-            * np.sqrt(np.pi)
-            / c_long
-            * np.exp(longitudinal_exponent)
-        )
-
-        q_time = (
-            2.0 * b_long * Omega / c2
-            + d_long / c_long
-        )
-
-        transverse_time_bracket = (
-            I0
-            + 1j * q_time * I1
-            + (
-                b_long / c2
-                - 0.5 * q_time * q_time
-            )
-            * I2
-            + 2.0 * a_long * Omega * I0 / c2
-            - 2.0j * a_long * I1 / c2
-        )
-
-        time_block = longitudinal_factor * transverse_time_bracket
-
-    else:
-        raise ValueError("time_mode must be either 'resummed' or 'expanded'.")
-
-    xi0_localization = (
-    -delta_kz * delta_kz
-    / (2.0 * packet2.sigma_par * packet2.sigma_par * gamma2 * gamma2)
+    longitudinal_exponent = (
+        -b_long * Omega * Omega / c2
+        -d_long * Omega / c_long
     )
 
-    base_factor = details["prefactor"] / (2.0 * np.sqrt(np.pi)) * np.exp(details["Xi0"] + xi0_localization)
+    longitudinal_factor = (
+        2.0
+        * np.sqrt(np.pi)
+        / c_long
+        * np.exp(longitudinal_exponent)
+    )
+
+    q_time = (
+        2.0 * b_long * Omega / c2
+        + d_long / c_long
+    )
+
+    transverse_time_bracket = (
+        I0
+        + 1j * q_time * I1
+        + (
+            b_long / c2
+            - 0.5 * q_time * q_time
+        )
+        * I2
+        + 2.0 * a_long * Omega * I0 / c2
+        - 2.0j * a_long * I1 / c2
+    )
+
+    time_block = longitudinal_factor * transverse_time_bracket
+    return time_block, dict(
+        longitudinal_exponent=longitudinal_exponent,
+        longitudinal_factor=longitudinal_factor,
+        q_time=q_time,
+        transverse_time_bracket=transverse_time_bracket,
+    )
+
+
+def S_impulse_first_order(
+    k3,
+    k4,
+    packet1: LGPacket,
+    packet2: LGPacket,
+    lam1: float,
+    lam2: float,
+    lam3: float,
+    lam4: float,
+    m: float = ELECTRON_MASS,
+    e_charge: float = ELECTRON_CHARGE,
+    impact_b=(0.0, 0.0),
+    N1: float | None = None,
+    N2: float | None = None,
+    time_mode: str = "resummed",
+    time_step: float | None = None,
+    time_step_scale: float = 1.0e-4,
+    accuracy: NumericalAccuracy | None = None,
+    return_details: bool = False,
+) -> complex | tuple[complex, dict]:
+    """S-matrix beyond strict impulse approximation.
+
+    Parameters
+    ----------
+    k3, k4:
+        Final three-momenta.
+    packet1, packet2:
+        Incoming wave packets.
+    lam1, lam2, lam3, lam4:
+        Helicity labels.
+    m, e_charge:
+        Particle mass and electric charge.
+    impact_b:
+        Transverse impact parameter.
+    N1, N2:
+        Optional precomputed packet normalizations.
+    time_mode:
+        "resummed" keeps the longitudinal exponential factor
+
+            exp(-b Omega^2 / c^2 - d Omega / c).
+
+        "expanded" uses the strictly expanded first-order expression
+
+            I0
+            + (2 Omega a / c^2 - Omega^2 b / c^2 - Omega d / c) I0
+            + i(2 Omega b / c^2 - 2a / c^2 + d / c) I1
+            + b / c^2 I2.
+
+    accuracy:
+        Numerical accuracy configuration for missing normalization constants.
+    return_details:
+        If True, return ``(S, details)``.
+
+    Returns
+    -------
+    complex or tuple[complex, dict]
+        First-order S-matrix value, optionally with diagnostic details.
+    """
+
+    common_factor, details = S_impulse_common_factor(
+        k3,
+        k4,
+        packet1,
+        packet2,
+        lam1,
+        lam2,
+        lam3,
+        lam4,
+        m=m,
+        e_charge=e_charge,
+        impact_b=impact_b,
+        N1=N1,
+        N2=N2,
+        accuracy=accuracy,
+    )
+
+    if "reason" in details:
+        return (common_factor, details) if return_details else common_factor
+
+    k3 = vec3(k3)
+    b_perp = vec2(impact_b)
+
+    k3_perp = k3[:2]
+    K_perp = details["K_perp"]
+
+    longitudinal = _first_order_longitudinal_parameters(packet1, packet2, details, m)
+
+    alpha0 = details["alpha"]
+    beta0 = details["beta"]
+    gamma0 = details["gamma"]
+
+    def transverse_integral_at_time(t):
+        """Evaluate the transverse integral with time-shifted widths.
+
+        Parameters
+        ----------
+        t:
+            Time offset used in the finite-difference stencil.
+
+        Returns
+        -------
+        complex
+            Analytic transverse integral at the shifted time.
+        """
+        alpha_t = alpha0 - 1j * t / details["eps1"]
+        gamma_t = gamma0 - 1j * t / details["eps2"]
+
+        return transverse_integral_explicit(
+            packet1.ell,
+            packet2.ell,
+            k3_perp,
+            K_perp,
+            b_perp,
+            alpha_t,
+            beta0,
+            gamma_t,
+        )
+
+    if time_step is None:
+        time_step = _automatic_time_step(
+            alpha0,
+            gamma0,
+            details["eps1"],
+            details["eps2"],
+            time_step_scale,
+        )
+
+    samples = tuple(
+        transverse_integral_at_time(multiplier * time_step)
+        for multiplier in (-2.0, -1.0, 0.0, 1.0, 2.0)
+    )
+    I0, I1, I2 = _five_point_time_derivatives(samples, time_step)
+    time_block, time_details = _first_order_time_block(
+        time_mode,
+        longitudinal,
+        I0,
+        I1,
+        I2,
+    )
+
+    xi0_localization = (
+        -longitudinal.delta_kz * longitudinal.delta_kz
+        / (
+            2.0
+            * packet2.sigma_par
+            * packet2.sigma_par
+            * longitudinal.gamma2
+            * longitudinal.gamma2
+        )
+    )
+
+    base_factor = (
+        details["prefactor"]
+        / (2.0 * np.sqrt(np.pi))
+        * np.exp(details["Xi0"] + xi0_localization)
+    )
 
     S = base_factor * time_block
 
@@ -476,24 +802,21 @@ def S_impulse_first_order(
         details.update(
             dict(
                 time_mode=time_mode,
-                gamma1_first=gamma1,
-                gamma2_first=gamma2,
-                Omega_first=Omega,
-                a_long_first=a_long,
-                b_long_first=b_long,
-                c_long_first=c_long,
-                d_long_first=d_long,
+                gamma1_first=longitudinal.gamma1,
+                gamma2_first=longitudinal.gamma2,
+                Omega_first=longitudinal.Omega,
+                a_long_first=longitudinal.a,
+                b_long_first=longitudinal.b,
+                c_long_first=longitudinal.c,
+                d_long_first=longitudinal.d,
                 time_step=time_step,
                 I0=I0,
                 I1=I1,
                 I2=I2,
-                longitudinal_exponent=longitudinal_exponent,
-                longitudinal_factor=longitudinal_factor,
-                q_time=q_time,
-                transverse_time_bracket=transverse_time_bracket,
                 time_block=time_block,
                 base_factor=base_factor,
                 S_first_order=S,
+                **time_details,
             )
         )
         return S, details
@@ -501,23 +824,22 @@ def S_impulse_first_order(
     return S
 
 
-
-@dataclass(frozen=True)
-class ExactTimeQuadrature:
-    """Quadrature parameters for exact-time delta representation.
-
-    ``chi`` is a regularized radial variable, rho = R sin(chi).
-    ``theta`` is the physical azimuthal angle in the transverse plane.
-    """
-
-    n_chi: int = 65
-    n_theta: int = 128
-    chi_method: str = "boole"
-    theta_method: str = "trapezoid"
-
-
 def _vortex_monomial(vec: np.ndarray, ell: int):
-    """Return |vec|^|ell| exp(i ell phi_vec) as a Cartesian monomial."""
+    """Return a Cartesian vortex monomial.
+
+    Parameters
+    ----------
+    vec:
+        Transverse two-vector.
+    ell:
+        Orbital angular momentum integer.
+
+    Returns
+    -------
+    complex
+        ``z**ell`` for non-negative ``ell`` and ``conj(z)**abs(ell)``
+        otherwise, where ``z = x + i y``.
+    """
     z = vec[0] + 1j * vec[1]
     if ell >= 0:
         return z ** ell
@@ -546,6 +868,37 @@ def S_exact_time(
 ):
     """S-matrix with the time integral evaluated by the delta representation.
 
+    Parameters
+    ----------
+    k3, k4:
+        Final three-momenta.
+    packet1, packet2:
+        Incoming wave packets.
+    lam1, lam2, lam3, lam4:
+        Helicity labels.
+    m, e_charge:
+        Particle mass and electric charge.
+    impact_b:
+        Transverse impact parameter.
+    N1, N2:
+        Optional precomputed packet normalizations.
+    quadrature:
+        Exact-time quadrature settings. Defaults to ``ExactTimeQuadrature()``.
+    denominator_mode:
+        ``"expanded"`` for the first-order Moller denominator expansion or
+        ``"exact"`` for the regulated exact denominator.
+    denominator_regulator:
+        Regulator added in exact-denominator mode.
+    accuracy:
+        Numerical accuracy configuration for missing normalization constants.
+    return_details:
+        If True, return ``(S, details)``.
+
+    Returns
+    -------
+    complex or tuple[complex, dict]
+        Exact-time S-matrix value, optionally with diagnostic details.
+
     This implements the exact-time delta representation with
 
         q = q0 + R sin(chi) (cos theta, sin theta).
@@ -555,14 +908,12 @@ def S_exact_time(
     """
     packet1 = packet1.checked()
     packet2 = packet2.checked()
-    accuracy = ACCURACY if accuracy is None else accuracy
+    accuracy = resolve_accuracy(accuracy)
     quadrature = ExactTimeQuadrature() if quadrature is None else quadrature
+    denominator_mode = _mode(denominator_mode, ("expanded", "exact"), "denominator_mode")
 
-    helicity_conserving = kron_delta(helicity(lam3), helicity(lam1)) and kron_delta(
-        helicity(lam4), helicity(lam2)
-    )
-    if not helicity_conserving:
-        S_zero = np.complex128(0.0)
+    if not _helicity_conserving(lam1, lam2, lam3, lam4):
+        S_zero = complex_zero()
         details = {"reason": "helicity delta is zero"}
         return (S_zero, details) if return_details else S_zero
 
@@ -634,7 +985,7 @@ def S_exact_time(
     )
 
     if Delta0 <= 0.0:
-        S_zero = np.complex128(0.0)
+        S_zero = complex_zero()
         details = dict(
             A_z=A_z,
             B_z=B_z,
@@ -658,15 +1009,13 @@ def S_exact_time(
                 "denominator_mode='expanded'."
             )
 
-    N1 = normalization_constant(packet1, m, accuracy=accuracy) if N1 is None else N1
-    N2 = normalization_constant(packet2, m, accuracy=accuracy) if N2 is None else N2
-
-    L1 = abs(packet1.ell)
-    L2 = abs(packet2.ell)
-    packet_denominator = (
-        packet1.sigma_perp ** L1
-        * packet2.sigma_perp ** L2
-        * np.sqrt(math.factorial(L1) * math.factorial(L2))
+    N1, N2 = resolve_normalizations(
+        packet1,
+        packet2,
+        N1=N1,
+        N2=N2,
+        m=m,
+        accuracy=accuracy,
     )
 
     prefactor = (
@@ -676,23 +1025,12 @@ def S_exact_time(
         * np.sqrt(E3 * E4 / (eps1 * eps2))
         * N1
         * N2
-        / packet_denominator
+        / _packet_denominator(packet1, packet2)
     )
 
-    chi_nodes, chi_weights = nodes_and_weights(
-        (0.0, 0.5 * PI),
-        quadrature.n_chi,
-        method=quadrature.chi_method,
-        endpoint=True,
-    )
-    theta_nodes, theta_weights = nodes_and_weights(
-        (0.0, 2.0 * PI),
-        quadrature.n_theta,
-        method=quadrature.theta_method,
-        endpoint=False,
-    )
+    (chi_nodes, chi_weights), (theta_nodes, theta_weights) = exact_time_nodes(quadrature)
 
-    integral = np.complex128(0.0)
+    integral = complex_zero()
 
     for chi, w_chi in zip(chi_nodes, chi_weights):
         sin_chi = np.sin(chi)
@@ -710,7 +1048,7 @@ def S_exact_time(
         radial_weight = w_chi * sin_chi
 
         for theta, w_theta in zip(theta_nodes, theta_weights):
-            n = np.array([np.cos(theta), np.sin(theta)], dtype=np.float64)
+            n = real_array([np.cos(theta), np.sin(theta)], shape=(2,))
             q = q0 + rho * n
             K_minus_q = K_perp - q
 
@@ -721,13 +1059,11 @@ def S_exact_time(
                     1.0 / k3_perp_sq
                     * (1.0 + 2.0 * np.dot(q, k3_perp) / k3_perp_sq)
                 )
-            elif denominator_mode == "exact":
+            else:
                 diff = k3_perp - q
                 denominator_factor = 1.0 / (
                     np.dot(diff, diff) + denominator_regulator * denominator_regulator
                 )
-            else:
-                raise ValueError("denominator_mode must be either 'expanded' or 'exact'.")
 
             transverse_exp = np.exp(
                 -0.5 * np.dot(q, q) / (s1p * s1p)
@@ -805,8 +1141,35 @@ def S_impulse_numeric_transverse_quad(
     accuracy: NumericalAccuracy | None = None,
     return_details: bool = False,
 ) -> complex | tuple[complex, dict]:
-    """Same S-matrix factorization but with direct numerical transverse integration."""
-    accuracy = ACCURACY if accuracy is None else accuracy
+    """Compute the impulse S matrix with numerical transverse integration.
+
+    Parameters
+    ----------
+    k3, k4:
+        Final three-momenta.
+    packet1, packet2:
+        Incoming wave packets.
+    lam1, lam2, lam3, lam4:
+        Helicity labels.
+    m, e_charge:
+        Particle mass and electric charge.
+    impact_b:
+        Transverse impact parameter.
+    N1, N2:
+        Optional precomputed packet normalizations.
+    n_phi:
+        Number of azimuthal nodes in the diagnostic transverse integration.
+    accuracy:
+        Numerical accuracy configuration for adaptive radial integrals.
+    return_details:
+        If True, return ``(S, details)``.
+
+    Returns
+    -------
+    complex or tuple[complex, dict]
+        S-matrix value computed with numerical transverse integration.
+    """
+    accuracy = resolve_accuracy(accuracy)
 
     common_factor, details = S_impulse_common_factor(
         k3,

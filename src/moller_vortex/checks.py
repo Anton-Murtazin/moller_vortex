@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from .accuracy import ACCURACY, NumericalAccuracy
+from .accuracy import NumericalAccuracy, resolve_accuracy
+from .constants import real_array
 from .kinematics import relative_error
 from .packets import LGPacket, normalization_constant, spherical_normalization_constant
 from .smatrix import S_impulse_closed_form, S_impulse_numeric_transverse_quad
@@ -23,7 +24,20 @@ from .transverse import (
 
 
 def _print_errors(title: str, errors: dict[str, float]) -> None:
-    """Print a compact table of numerical errors."""
+    """Print a compact table of numerical errors.
+
+    Parameters
+    ----------
+    title:
+        Table title printed before the errors.
+    errors:
+        Mapping from check names to relative errors.
+
+    Returns
+    -------
+    None
+        The table is written to standard output.
+    """
     print(title)
     for name, error in errors.items():
         print(f"  {name:<45} {error:.6e}")
@@ -35,11 +49,23 @@ def check_normalization(
 ) -> dict[str, float]:
     """Return errors for normalization in the spherical analytic limit.
 
+    Parameters
+    ----------
+    accuracy:
+        Numerical accuracy for adaptive normalization integrals.
+    verbose:
+        If True, print a compact error table.
+
+    Returns
+    -------
+    dict[str, float]
+        Relative errors keyed by check description.
+
     The numerical on-axis normalization formula is compared with the closed
     expression valid at sigma_perp = sigma_par. No acceptance threshold is
     applied; the function only returns the numerical relative errors.
     """
-    accuracy = ACCURACY if accuracy is None else accuracy
+    accuracy = resolve_accuracy(accuracy)
 
     packets = [
         LGPacket(ell=0, sigma_perp=0.70, sigma_par=0.70, kbar_z=4.0),
@@ -62,6 +88,16 @@ def check_normalization(
 
 def check_laguerre_derivative(verbose: bool = True) -> dict[str, float]:
     """Return errors for the Laguerre derivative formula against the direct sum.
+
+    Parameters
+    ----------
+    verbose:
+        If True, print a compact error table.
+
+    Returns
+    -------
+    dict[str, float]
+        Relative errors keyed by derivative orders.
 
     This check monitors the sign convention in
     d_t1^a d_t2^b exp(c1*t1 + c2*t2 - c12*t1*t2).
@@ -90,15 +126,29 @@ def check_transverse_integral(
 ) -> dict[str, float]:
     """Return errors for closed transverse expressions.
 
+    Parameters
+    ----------
+    n_phi:
+        Number of angular nodes for the direct numerical transverse check.
+    accuracy:
+        Numerical accuracy for the radial adaptive integrations.
+    verbose:
+        If True, print a compact error table.
+
+    Returns
+    -------
+    dict[str, float]
+        Relative errors keyed by OAM pair.
+
     Each closed expression is compared with direct polar quadrature. No
     acceptance threshold is applied; the function only returns numerical
     relative errors.
     """
-    accuracy = ACCURACY if accuracy is None else accuracy
+    accuracy = resolve_accuracy(accuracy)
 
-    k3_perp = np.array([1.10, 0.45])
-    K_perp = np.array([0.25, -0.18])
-    b_perp = np.array([0.08, -0.04])
+    k3_perp = real_array([1.10, 0.45], shape=(2,))
+    K_perp = real_array([0.25, -0.18], shape=(2,))
+    b_perp = real_array([0.08, -0.04], shape=(2,))
 
     alpha = 2.2 + 0.0j
     beta = 0.3 + 0.0j
@@ -155,8 +205,23 @@ def check_smatrix(
     accuracy: NumericalAccuracy | None = None,
     verbose: bool = True,
 ) -> dict[str, float]:
-    """Return error for closed impulse S matrix vs numerical transverse integration."""
-    accuracy = ACCURACY if accuracy is None else accuracy
+    """Return error for closed impulse S matrix vs numerical transverse integration.
+
+    Parameters
+    ----------
+    n_phi:
+        Number of angular nodes for numerical transverse quadrature.
+    accuracy:
+        Numerical accuracy for normalization and radial integrations.
+    verbose:
+        If True, print a compact error table.
+
+    Returns
+    -------
+    dict[str, float]
+        Relative error between closed and numerical-transverse S matrices.
+    """
+    accuracy = resolve_accuracy(accuracy)
 
     packet1 = LGPacket(ell=1, sigma_perp=0.18, sigma_par=0.35, kbar_z=20.0)
     packet2 = LGPacket(ell=-1, sigma_perp=0.18, sigma_par=0.35, kbar_z=-20.0)
@@ -164,9 +229,9 @@ def check_smatrix(
     N1 = normalization_constant(packet1, accuracy=accuracy)
     N2 = normalization_constant(packet2, accuracy=accuracy)
 
-    impact_b = np.array([0.3, 0.0])
-    k3 = np.array([0.8, 0.10, 19.7])
-    k4 = np.array([-0.55, -0.08, -19.6])
+    impact_b = real_array([0.3, 0.0], shape=(2,))
+    k3 = real_array([0.8, 0.10, 19.7], shape=(3,))
+    k4 = real_array([-0.55, -0.08, -19.6], shape=(3,))
 
     S_closed = S_impulse_closed_form(
         k3,
@@ -214,8 +279,23 @@ def run_all_checks(
     accuracy: NumericalAccuracy | None = None,
     verbose: bool = True,
 ) -> dict[str, dict[str, float]]:
-    """Run all built-in numerical comparisons and return their errors."""
-    accuracy = ACCURACY if accuracy is None else accuracy
+    """Run all built-in numerical comparisons and return their errors.
+
+    Parameters
+    ----------
+    n_phi:
+        Number of angular nodes used by transverse numerical checks.
+    accuracy:
+        Numerical accuracy shared by adaptive integrations.
+    verbose:
+        If True, print each check table.
+
+    Returns
+    -------
+    dict[str, dict[str, float]]
+        Nested mapping from check group to relative-error values.
+    """
+    accuracy = resolve_accuracy(accuracy)
 
     results = {
         "normalization": check_normalization(

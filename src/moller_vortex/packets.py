@@ -6,21 +6,35 @@ from dataclasses import dataclass
 import math
 
 import numpy as np
-from .accuracy import ACCURACY, NumericalAccuracy
-from .constants import ELECTRON_MASS, PI
-from .kinematics import energy, vec2, vec3
-import math
-import numpy as np
 
 from scipy.integrate import quad
 from scipy.special import kve
+
+from .accuracy import NumericalAccuracy, resolve_accuracy
+from .constants import ELECTRON_MASS, PI
+from .kinematics import energy, vec2, vec3
 
 @dataclass(frozen=True)
 class LGPacket:
     """Physical parameters of one on-axis momentum-space LG packet.
 
-    The packet is restricted to kbar_perp = 0. The normalization constant is
-    not stored in the object; compute it explicitly with normalization_constant.
+    Parameters
+    ----------
+    ell:
+        Integer orbital angular momentum.
+    sigma_perp:
+        Transverse momentum width in MeV.
+    sigma_par:
+        Longitudinal momentum width in MeV.
+    kbar_z:
+        Central longitudinal momentum in MeV.
+
+    Returns
+    -------
+    LGPacket
+        Immutable packet parameter container.  The packet is restricted to
+        kbar_perp = 0. The normalization constant is not stored in the object;
+        compute it explicitly with ``normalization_constant``.
     """
 
     ell: int
@@ -29,6 +43,17 @@ class LGPacket:
     kbar_z: float
 
     def checked(self) -> "LGPacket":
+        """Validate packet parameters and return the packet itself.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        LGPacket
+            The validated packet.
+        """
         if not isinstance(self.ell, int):
             raise TypeError("ell must be an integer.")
         if self.sigma_perp <= 0.0 or self.sigma_par <= 0.0:
@@ -39,7 +64,20 @@ class LGPacket:
 
 
 def central_energy(packet: LGPacket, m: float = ELECTRON_MASS) -> float:
-    """Central energy eps = sqrt(m^2 + kbar_z^2) for kbar_perp = 0."""
+    """Return the central on-shell energy of an on-axis packet.
+
+    Parameters
+    ----------
+    packet:
+        Incoming LG packet.
+    m:
+        Particle mass.
+
+    Returns
+    -------
+    float
+        ``sqrt(m**2 + packet.kbar_z**2)``.
+    """
     packet = packet.checked()
     return np.sqrt(m * m + packet.kbar_z ** 2)
 
@@ -51,6 +89,20 @@ def normalization_constant(
 ) -> float:
     """Compute the on-axis relativistic normalization constant N_ell.
 
+    Parameters
+    ----------
+    packet:
+        Packet whose normalization constant is computed.
+    m:
+        Particle mass.
+    accuracy:
+        Numerical accuracy for the adaptive one-dimensional integral.
+
+    Returns
+    -------
+    float
+        Relativistic normalization constant.
+
     Stable form for narrow packets.
 
     The integration variable is
@@ -60,7 +112,7 @@ def normalization_constant(
     This avoids large powers of k_perp and keeps the radial integral in a
     dimensionless variable.
     """
-    accuracy = ACCURACY if accuracy is None else accuracy
+    accuracy = resolve_accuracy(accuracy)
     packet = packet.checked()
 
     ell_abs = abs(packet.ell)
@@ -70,6 +122,18 @@ def normalization_constant(
     radial_coeff = 1.0 - sigma_perp ** 2 / sigma_par ** 2
 
     def integrand(y: float) -> float:
+        """Return the dimensionless radial normalization integrand.
+
+        Parameters
+        ----------
+        y:
+            Dimensionless radial variable ``k_perp / sigma_perp``.
+
+        Returns
+        -------
+        float
+            Integrand value for the one-dimensional normalization integral.
+        """
         k_perp = sigma_perp * y
         eps_perp = np.hypot(m, k_perp)
 
@@ -91,9 +155,7 @@ def normalization_constant(
         integrand,
         0.0,
         np.inf,
-        epsabs=accuracy.quad_epsabs,
-        epsrel=accuracy.quad_epsrel,
-        limit=accuracy.quad_limit,
+        **accuracy.quad_kwargs(),
     )[0]
 
     norm_without_N = (
@@ -113,7 +175,20 @@ def spherical_normalization_constant(
     packet: LGPacket,
     m: float = ELECTRON_MASS,
 ) -> float:
-    """Closed normalization constant in the spherical limit sigma_perp = sigma_par."""
+    """Return the closed normalization constant in the spherical limit.
+
+    Parameters
+    ----------
+    packet:
+        Packet with ``sigma_perp == sigma_par``.
+    m:
+        Particle mass.
+
+    Returns
+    -------
+    float
+        Closed Bessel-K normalization constant.
+    """
     packet = packet.checked()
 
     if packet.sigma_perp != packet.sigma_par:
@@ -138,6 +213,24 @@ def lg_packet_phi(
     impact_b=(0.0, 0.0),
 ) -> complex:
     """Value of the on-axis LG packet in momentum space.
+
+    Parameters
+    ----------
+    k:
+        Momentum three-vector.
+    packet:
+        Packet parameters.
+    N:
+        Packet normalization constant.
+    m:
+        Particle mass.
+    impact_b:
+        Optional transverse impact parameter phase.
+
+    Returns
+    -------
+    complex
+        Momentum-space packet wave-function value.
 
     impact_b is included only when this function is deliberately used for the
     displaced second incoming packet.
@@ -166,3 +259,38 @@ def lg_packet_phi(
     prefactor /= packet.sigma_perp ** ell_abs * np.sqrt(math.factorial(ell_abs))
 
     return prefactor * np.exp(exponent)
+
+
+def resolve_normalizations(
+    packet1: LGPacket,
+    packet2: LGPacket,
+    *,
+    N1: float | None = None,
+    N2: float | None = None,
+    m: float = ELECTRON_MASS,
+    accuracy: NumericalAccuracy | None = None,
+) -> tuple[float, float]:
+    """Return explicit or newly computed normalization constants.
+
+    Parameters
+    ----------
+    packet1, packet2:
+        Incoming wave packets.
+    N1, N2:
+        Optional precomputed normalization constants.
+    m:
+        Particle mass.
+    accuracy:
+        Numerical accuracy used when a normalization must be computed.
+
+    Returns
+    -------
+    tuple[float, float]
+        Normalization constants ``(N1, N2)``.
+    """
+    accuracy = resolve_accuracy(accuracy)
+    if N1 is None:
+        N1 = normalization_constant(packet1, m=m, accuracy=accuracy)
+    if N2 is None:
+        N2 = normalization_constant(packet2, m=m, accuracy=accuracy)
+    return N1, N2

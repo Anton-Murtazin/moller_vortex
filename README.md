@@ -1,6 +1,6 @@
 # moller-vortex
 
-Self-contained research code for numerical analysis of Møller scattering of on-axis vortex wave packets in impulse approximation.
+Self-contained research code for numerical analysis of Moller scattering of on-axis vortex wave packets.
 
 The project is written in natural units:
 
@@ -8,7 +8,11 @@ $$
 \hbar = c = 1.
 $$
 
-Energies, masses and momenta are measured in MeV. Impact parameters are measured in MeV$^{-1}$.
+Energies, masses and momenta are measured in MeV. Impact parameters are measured in
+
+$$
+\mathrm{MeV}^{-1}.
+$$
 
 ## Installation for local work
 
@@ -55,9 +59,9 @@ packet2 = mv.LGPacket(ell=-1, sigma_perp=0.18, sigma_par=0.35, kbar_z=-20.0)
 N1 = mv.normalization_constant(packet1)
 N2 = mv.normalization_constant(packet2)
 
-k3 = np.array([0.8, 0.10, 19.7])
-k4 = np.array([-0.55, -0.08, -19.6])
-impact_b = np.array([0.3, 0.0])
+k3 = mv.vec3([0.8, 0.10, 19.7])
+k4 = mv.vec3([-0.55, -0.08, -19.6])
+impact_b = mv.vec2([0.3, 0.0])
 
 S = mv.S_impulse_closed_form(
     k3,
@@ -75,6 +79,20 @@ S = mv.S_impulse_closed_form(
 ```
 
 For a one-off calculation, `N1` and `N2` may be omitted; the S-matrix functions will compute them internally. For scans, compute them explicitly and reuse them.
+
+## Central numerical settings
+
+Use `NumericalAccuracy` for adaptive one-dimensional integrations and `ProbabilityQuadrature` / `ExactTimeQuadrature` for deterministic node counts and integration ranges.
+
+The quadrature dataclasses only store settings. Nodes and weights are built explicitly by:
+
+```python
+mv.probability_inner_nodes(quadrature)
+mv.probability_outer_nodes(quadrature)
+mv.exact_time_nodes(exact_quad)
+```
+
+For probability integrals the finite-axis defaults are composite Boole, so use node counts of the form `n = 4*m + 1`, for example `9`, `17`, or `25`. Periodic angular axes use endpoint-free trapezoid quadrature by default.
 
 ## Built-in numerical checks
 
@@ -105,23 +123,36 @@ mv.check_smatrix(accuracy=accuracy, n_phi=16)
 
 The returned dictionaries contain raw relative errors. The interpretation of those errors is left to the analysis notebook. The checks compare:
 
-1. normalization in the spherical limit $\sigma_\perp = \sigma_\parallel$ against the closed Bessel-$K$ expression;
+1. normalization in the spherical limit
+
+$$
+\sigma_\perp = \sigma_\parallel
+$$
+
+against the closed Bessel-K expression;
 2. analytic transverse expressions against direct numerical polar integration;
-3. closed impulse $S$ matrix against the same formula with numerical transverse integration.
+3. closed impulse
+
+$$
+S
+$$
+
+matrix against the same formula with numerical transverse integration.
 
 ## Structure
 
 ```text
 src/moller_vortex/
   constants.py     units, dtypes, electron mass and charge
-  accuracy.py      global numerical integration accuracy
+  accuracy.py      global numerical integration accuracy and scipy quad kwargs
   kinematics.py    vector checks, energies, helicity labels
   packets.py       LGPacket and normalization constants
-  amplitudes.py    impulse Møller amplitude
+  amplitudes.py    impulse Moller amplitude
   transverse.py    analytic and direct numerical transverse integrals
-  smatrix.py       closed and numerically checked impulse S matrix
+  smatrix.py       closed, first-order, exact-time and numerical-check S-matrix routines
   checks.py        ordinary check functions for notebooks and scripts
   probability.py   numerical integration of the squared module of S matrix related to the transverse total momentum
+  quadrature.py    deterministic quadrature rules and central quadrature dataclasses
 
 notebooks/
   usage_example.ipynb
