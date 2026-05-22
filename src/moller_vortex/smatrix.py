@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -11,6 +12,7 @@ from .constants import ELECTRON_CHARGE, ELECTRON_MASS, PI
 from .kinematics import energy, helicity, kron_delta, vec2, vec3
 from .packets import LGPacket, central_energy, normalization_constant
 from .transverse import transverse_integral_explicit, transverse_integral_numeric_quad
+from .quadrature import nodes_and_weights
 
 
 def impulse_parameters(
@@ -21,7 +23,12 @@ def impulse_parameters(
     impact_b,
     m: float = ELECTRON_MASS,
 ) -> dict:
-    """Return scalar parameters used by the closed impulse S-matrix formula."""
+    """Return scalar parameters used by the closed impulse S-matrix formula.
+
+    Only ``Xi0`` is algebraically shortened.  The transverse parameters
+    ``alpha``, ``beta`` and ``gamma`` are intentionally kept in the original
+    derivation form.
+    """
     packet1 = packet1.checked()
     packet2 = packet2.checked()
 
@@ -33,7 +40,6 @@ def impulse_parameters(
     K_perp = K_vec[:2]
     Kz = K_vec[2]
 
-    K_vec_sq = np.dot(K_vec, K_vec)
     K_perp_sq = np.dot(K_perp, K_perp)
 
     E3 = energy(k3, m)
@@ -56,53 +62,26 @@ def impulse_parameters(
     s2p = packet2.sigma_perp
     s2z = packet2.sigma_par
 
-    inv_s1p2 = 1.0 / (s1p * s1p)
-    inv_s2p2 = 1.0 / (s2p * s2p)
-    inv_s2z2 = 1.0 / (s2z * s2z)
-
+    # Algebraically reduced Xi0 only.  The transverse parameters below are kept
+    # in the original derivation form so that no additional cancellation between
+    # exp(Xi0) and the transverse integral is imposed here.
     Xi0 = (
-        0.5 * K_perp_sq * (inv_s2z2 - inv_s2p2)
+        0.5 * K_perp_sq * (1.0 / (s2z * s2z) - 1.0 / (s2p * s2p))
         + 1j * np.dot(b, K_perp)
     )
 
-    A_long = 0.0
+    A_long = np.float64(0.0)
 
     Omega_long = eps1 + eps2 - E_K + v2 * DeltaKz
 
-    alpha = inv_s1p2 + inv_s2p2 - inv_s2z2
-    beta = inv_s2p2 - inv_s2z2
-    gamma = inv_s2z2
+    alpha = -(
+        + 1.0 / (s2z * s2z)
+        - 1.0 / (s1p * s1p)
+        - 1.0 / (s2p * s2p)
+    )
 
-    # Xi0 = (
-    #     (m * m + eps1 * eps1 - packet1.kbar_z ** 2) / (2.0 * s1z ** 2)
-    #     + (m * m + eps2 * eps2 + K_vec_sq - (Kz - packet2.kbar_z) ** 2) / (2.0 * s2z ** 2)
-    #     - K_perp_sq / (2.0 * s2p ** 2)
-    #     + 1j * np.dot(b, K_perp)
-    #     - eps1 * eps1 / s1z ** 2
-    #     - eps2 * eps2 / s2z ** 2
-    #     + packet1.kbar_z * (packet1.kbar_z / s1z ** 2 - packet2.kbar_z / s2z ** 2)
-    #     - eps2 * v2 * DeltaKz / s2z ** 2
-    # )
-
-    # A_long = (
-    #     packet1.kbar_z / s1z ** 2
-    #     - packet2.kbar_z / s2z ** 2
-    #     - v1 * eps1 / s1z ** 2
-    #     + v2 * eps2 / s2z ** 2
-    # )
-
-    # Omega_long = eps1 + eps2 - E_K + v2 * DeltaKz
-
-    # alpha = -(
-    #     1.0 / s1z ** 2
-    #     + 1.0 / s2z ** 2
-    #     - 1.0 / s1p ** 2
-    #     - 1.0 / s2p ** 2
-    #     - eps1 / (eps1 * s1z ** 2)
-    # )
-
-    # beta = 1.0 / s2p ** 2 - 1.0 / s2z ** 2
-    # gamma = eps2 / (eps2 * s2z ** 2)
+    beta = 1.0 / (s2p * s2p) - 1.0 / (s2z * s2z)
+    gamma = 1.0 / ( s2z * s2z)
 
     return dict(
         K_vec=K_vec,
@@ -123,7 +102,6 @@ def impulse_parameters(
         beta=beta,
         gamma=gamma,
     )
-
 
 def S_impulse_common_factor(
     k3,
@@ -149,7 +127,7 @@ def S_impulse_common_factor(
         helicity(lam4), helicity(lam2)
     )
     if not helicity_conserving:
-        return 0.0 + 0.0j, {"reason": "helicity delta is zero"}
+        return np.complex128(0.0), {"reason": "helicity delta is zero"}
 
     b = vec2(impact_b)
     accuracy = ACCURACY if accuracy is None else accuracy
@@ -319,6 +297,7 @@ def S_impulse_first_order(
         impact_b=impact_b,
         N1=N1,
         N2=N2,
+        accuracy=accuracy,
     )
 
     if "reason" in details:
@@ -390,7 +369,10 @@ def S_impulse_first_order(
         gamma_dot_abs = abs(1.0 / eps2)
 
         time_scale_A = abs(A0) / A_dot_abs
-        time_scale_gamma = abs(gamma0) / gamma_dot_abs
+        if gamma0 == 0:
+            time_scale_gamma = np.inf
+        else:
+            time_scale_gamma = abs(gamma0) / gamma_dot_abs
 
         time_step = time_step_scale * min(time_scale_A, time_scale_gamma)
 
@@ -513,6 +495,292 @@ def S_impulse_first_order(
                 base_factor=base_factor,
                 S_first_order=S,
             )
+        )
+        return S, details
+
+    return S
+
+
+
+@dataclass(frozen=True)
+class ExactTimeQuadrature:
+    """Quadrature parameters for exact-time delta representation.
+
+    ``chi`` is a regularized radial variable, rho = R sin(chi).
+    ``theta`` is the physical azimuthal angle in the transverse plane.
+    """
+
+    n_chi: int = 65
+    n_theta: int = 128
+    chi_method: str = "boole"
+    theta_method: str = "trapezoid"
+
+
+def _vortex_monomial(vec: np.ndarray, ell: int):
+    """Return |vec|^|ell| exp(i ell phi_vec) as a Cartesian monomial."""
+    z = vec[0] + 1j * vec[1]
+    if ell >= 0:
+        return z ** ell
+    return np.conjugate(z) ** (-ell)
+
+
+def S_exact_time(
+    k3,
+    k4,
+    packet1: LGPacket,
+    packet2: LGPacket,
+    lam1: float,
+    lam2: float,
+    lam3: float,
+    lam4: float,
+    m: float = ELECTRON_MASS,
+    e_charge: float = ELECTRON_CHARGE,
+    impact_b=(0.0, 0.0),
+    N1: float | None = None,
+    N2: float | None = None,
+    quadrature: ExactTimeQuadrature | None = None,
+    denominator_mode: str = "expanded",
+    denominator_regulator: float = 0.0,
+    accuracy: NumericalAccuracy | None = None,
+    return_details: bool = False,
+):
+    """S-matrix with the time integral evaluated by the delta representation.
+
+    This implements the exact-time delta representation with
+
+        q = q0 + R sin(chi) (cos theta, sin theta).
+
+    The exponent is evaluated through the algebraically combined
+    ``Xi0 + Xi_perp`` form to avoid artificial cancellations.
+    """
+    packet1 = packet1.checked()
+    packet2 = packet2.checked()
+    accuracy = ACCURACY if accuracy is None else accuracy
+    quadrature = ExactTimeQuadrature() if quadrature is None else quadrature
+
+    helicity_conserving = kron_delta(helicity(lam3), helicity(lam1)) and kron_delta(
+        helicity(lam4), helicity(lam2)
+    )
+    if not helicity_conserving:
+        S_zero = np.complex128(0.0)
+        details = {"reason": "helicity delta is zero"}
+        return (S_zero, details) if return_details else S_zero
+
+    k3 = vec3(k3)
+    k4 = vec3(k4)
+    b_perp = vec2(impact_b)
+
+    K_vec = k3 + k4
+    K_perp = K_vec[:2]
+    Kz = K_vec[2]
+    K_perp_sq = np.dot(K_perp, K_perp)
+
+    k3_perp = k3[:2]
+    k3_perp_sq = np.dot(k3_perp, k3_perp)
+
+    E3 = energy(k3, m)
+    E4 = energy(k4, m)
+    E_K = E3 + E4
+
+    eps1 = central_energy(packet1, m)
+    eps2 = central_energy(packet2, m)
+
+    gamma1 = eps1 / m
+    gamma2 = eps2 / m
+
+    v1 = packet1.kbar_z / eps1
+    v2 = packet2.kbar_z / eps2
+
+    DeltaKz = Kz - packet1.kbar_z - packet2.kbar_z
+
+    s1p = packet1.sigma_perp
+    s1z = packet1.sigma_par
+    s2p = packet2.sigma_perp
+    s2z = packet2.sigma_par
+
+    A_z = 0.5 * (
+        1.0 / (eps1 * gamma1 * gamma1)
+        + 1.0 / (eps2 * gamma2 * gamma2)
+    )
+    B_z = (
+        eps1 / (2.0 * s1z * s1z) * 1.0 / (eps1 * gamma1 * gamma1)
+        + eps2 / (2.0 * s2z * s2z) * 1.0 / (eps2 * gamma2 * gamma2)
+    )
+    C_z = v1 - v2 - DeltaKz / (eps2 * gamma2 * gamma2)
+    D_z = (
+        packet1.kbar_z / (s1z * s1z)
+        - packet2.kbar_z / (s2z * s2z)
+        - v1 * eps1 / (s1z * s1z)
+        + v2 * eps2 / (s2z * s2z)
+        + eps2 / (s2z * s2z) * DeltaKz / (eps2 * gamma2 * gamma2)
+    )
+    Omega_z = (
+        eps1
+        + eps2
+        - E_K
+        + v2 * DeltaKz
+        + DeltaKz * DeltaKz / (2.0 * eps2 * gamma2 * gamma2)
+    )
+
+    longitudinal_exp_arg = -DeltaKz * DeltaKz / (
+        2.0 * s2z * s2z * gamma2 * gamma2
+    )
+
+    eta_perp = 1.0 / eps1 + 1.0 / eps2
+    q0 = eps1 / (eps1 + eps2) * K_perp
+
+    Delta0 = C_z * C_z - 4.0 * A_z * (
+        Omega_z + K_perp_sq / (2.0 * (eps1 + eps2))
+    )
+
+    if Delta0 <= 0.0:
+        S_zero = np.complex128(0.0)
+        details = dict(
+            A_z=A_z,
+            B_z=B_z,
+            C_z=C_z,
+            D_z=D_z,
+            Omega_z=Omega_z,
+            Delta0=Delta0,
+            reason="Delta0 is non-positive",
+        )
+        return (S_zero, details) if return_details else S_zero
+
+    sqrt_Delta0 = np.sqrt(Delta0)
+    R = np.sqrt(Delta0 / (2.0 * A_z * eta_perp))
+
+    if denominator_mode == "exact" and denominator_regulator == 0.0:
+        pole_distance = np.linalg.norm(k3_perp - q0)
+        if pole_distance < R:
+            raise ValueError(
+                "The exact Moller denominator has a non-integrable pole inside "
+                "the exact-time q-disk. Use denominator_regulator or "
+                "denominator_mode='expanded'."
+            )
+
+    N1 = normalization_constant(packet1, m, accuracy=accuracy) if N1 is None else N1
+    N2 = normalization_constant(packet2, m, accuracy=accuracy) if N2 is None else N2
+
+    L1 = abs(packet1.ell)
+    L2 = abs(packet2.ell)
+    packet_denominator = (
+        packet1.sigma_perp ** L1
+        * packet2.sigma_perp ** L2
+        * np.sqrt(math.factorial(L1) * math.factorial(L2))
+    )
+
+    prefactor = (
+        -1j
+        * e_charge ** 2
+        / (PI * (2.0 * PI) ** 4)
+        * np.sqrt(E3 * E4 / (eps1 * eps2))
+        * N1
+        * N2
+        / packet_denominator
+    )
+
+    chi_nodes, chi_weights = nodes_and_weights(
+        (0.0, 0.5 * PI),
+        quadrature.n_chi,
+        method=quadrature.chi_method,
+        endpoint=True,
+    )
+    theta_nodes, theta_weights = nodes_and_weights(
+        (0.0, 2.0 * PI),
+        quadrature.n_theta,
+        method=quadrature.theta_method,
+        endpoint=False,
+    )
+
+    integral = np.complex128(0.0)
+
+    for chi, w_chi in zip(chi_nodes, chi_weights):
+        sin_chi = np.sin(chi)
+        cos_chi = np.cos(chi)
+        rho = R * sin_chi
+
+        xi_plus = (-C_z + sqrt_Delta0 * cos_chi) / (2.0 * A_z)
+        xi_minus = (-C_z - sqrt_Delta0 * cos_chi) / (2.0 * A_z)
+
+        root_weight = (
+            np.exp(-B_z * xi_plus * xi_plus + D_z * xi_plus)
+            + np.exp(-B_z * xi_minus * xi_minus + D_z * xi_minus)
+        )
+
+        radial_weight = w_chi * sin_chi
+
+        for theta, w_theta in zip(theta_nodes, theta_weights):
+            n = np.array([np.cos(theta), np.sin(theta)], dtype=np.float64)
+            q = q0 + rho * n
+            K_minus_q = K_perp - q
+
+            if denominator_mode == "expanded":
+                if k3_perp_sq == 0.0:
+                    raise ValueError("Expanded denominator requires nonzero |k3_perp|.")
+                denominator_factor = (
+                    1.0 / k3_perp_sq
+                    * (1.0 + 2.0 * np.dot(q, k3_perp) / k3_perp_sq)
+                )
+            elif denominator_mode == "exact":
+                diff = k3_perp - q
+                denominator_factor = 1.0 / (
+                    np.dot(diff, diff) + denominator_regulator * denominator_regulator
+                )
+            else:
+                raise ValueError("denominator_mode must be either 'expanded' or 'exact'.")
+
+            transverse_exp = np.exp(
+                -0.5 * np.dot(q, q) / (s1p * s1p)
+                -0.5 * np.dot(K_minus_q, K_minus_q) / (s2p * s2p)
+                + 1j * np.dot(b_perp, K_minus_q)
+            )
+
+            vortex_factor = (
+                _vortex_monomial(q, packet1.ell)
+                * _vortex_monomial(K_minus_q, packet2.ell)
+            )
+
+            A_perp = denominator_factor * transverse_exp * vortex_factor
+            integral += w_theta * radial_weight * A_perp * root_weight
+
+    disk_factor = sqrt_Delta0 / (2.0 * A_z * eta_perp)
+    S = prefactor * np.exp(longitudinal_exp_arg) * disk_factor * integral
+
+    if return_details:
+        details = dict(
+            N1=N1,
+            N2=N2,
+            impact_b=b_perp,
+            K_vec=K_vec,
+            K_perp=K_perp,
+            Kz=Kz,
+            E3=E3,
+            E4=E4,
+            E_K=E_K,
+            eps1=eps1,
+            eps2=eps2,
+            gamma1=gamma1,
+            gamma2=gamma2,
+            v1=v1,
+            v2=v2,
+            DeltaKz=DeltaKz,
+            A_z=A_z,
+            B_z=B_z,
+            C_z=C_z,
+            D_z=D_z,
+            Omega_z=Omega_z,
+            eta_perp=eta_perp,
+            q0=q0,
+            Delta0=Delta0,
+            R=R,
+            prefactor=prefactor,
+            longitudinal_exp_arg=longitudinal_exp_arg,
+            disk_factor=disk_factor,
+            integral=integral,
+            denominator_mode=denominator_mode,
+            denominator_regulator=denominator_regulator,
+            quadrature=quadrature,
+            S_exact_time=S,
         )
         return S, details
 

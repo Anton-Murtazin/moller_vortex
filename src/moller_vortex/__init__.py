@@ -17,3 +17,4 @@ from .smatrix import *
 from .transverse import *
 from .checks import *
 from .probability import *
+from .quadrature import *
