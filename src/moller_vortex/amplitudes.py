@@ -20,7 +20,27 @@ def moller_amplitude_impulse(
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
 ) -> complex:
-    """Ultrarelativistic paraxial impulse approximation to Møller scattering."""
+    """Compute the ultrarelativistic paraxial Moller amplitude.
+
+    Parameters
+    ----------
+    k1, k2:
+        Incoming plane-wave momenta.
+    k3, k4:
+        Outgoing plane-wave momenta.
+    lam1, lam2, lam3, lam4:
+        Helicity labels.
+    m:
+        Electron mass.
+    e_charge:
+        Electric charge.
+
+    Returns
+    -------
+    complex
+        Plane-wave Moller amplitude in the impulse approximation. Non-
+        helicity-conserving channels return zero.
+    """
     k1 = vec3(k1)
     k2 = vec3(k2)
     k3 = vec3(k3)

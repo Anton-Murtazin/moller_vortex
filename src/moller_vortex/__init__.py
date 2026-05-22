@@ -1,4 +1,4 @@
-"""Møller scattering of on-axis vortex packets in impulse approximation.
+"""Moller scattering of on-axis vortex packets.
 
 The project is intended as research code. The package-level namespace re-exports
 objects from all internal modules so that notebooks can use
