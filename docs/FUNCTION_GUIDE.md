@@ -538,10 +538,30 @@ Internally, the code is split into small explicit steps:
 
 ### `S_exact_time(...)` and `ExactTimeQuadrature`
 
-`S_exact_time(...)` uses `mv.ExactTimeQuadrature`, which is a plain dataclass with only four fields:
+`S_exact_time(...)` uses `mv.ExactTimeQuadrature`.  The exact-time disk now has
+two separate radial formulas, selected by `radial_variable`:
+
+- `"kappa"`: direct integration in `q = q0 + kappa (cos theta, sin theta)`;
+- `"chi"`: regularized integration in `q = q0 + R sin(chi) (cos theta, sin theta)`.
+
+For the direct kappa formula use `n_kappa` and `kappa_method`:
 
 ```python
 exact_quad = mv.ExactTimeQuadrature(
+    radial_variable="kappa",
+    n_kappa=65,
+    n_theta=128,
+    kappa_method="boole",
+    theta_method="trapezoid",
+    kappa_n_sigma=12.0,
+)
+```
+
+For the chi formula use `n_chi` and `chi_method`:
+
+```python
+exact_quad = mv.ExactTimeQuadrature(
+    radial_variable="chi",
     n_chi=65,
     n_theta=128,
     chi_method="boole",
@@ -549,12 +569,16 @@ exact_quad = mv.ExactTimeQuadrature(
 )
 ```
 
-The actual nodes are built by:
+The helper `exact_time_nodes(...)` builds the selected radial nodes.  For the
+chi formula no interval is needed:
 
 ```python
 (chi_nodes, chi_weights), \
 (theta_nodes, theta_weights) = mv.exact_time_nodes(exact_quad)
 ```
+
+For the direct kappa formula, `S_exact_time(...)` computes the physical radial
+interval and passes it into `exact_time_nodes(...)`.
 
 This corresponds to the regularized disk integral
 

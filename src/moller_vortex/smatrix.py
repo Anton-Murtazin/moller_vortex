@@ -280,10 +280,12 @@ def S_impulse_common_factor(
 
     pars = impulse_parameters(packet1, packet2, k3, k4, b, m)
 
+    # This common factor is before the transverse integral; the transverse
+    # routines already include the angular 2*pi from d^2q.
     prefactor = (
-        -2j
+        -1j
         * e_charge ** 2
-        / (2.0 * PI) ** 4
+        / (PI * (2.0 * PI) ** 4)
         * np.sqrt(pars["E3"] * pars["E4"] / (pars["eps1"] * pars["eps2"]))
         * N1
         * N2
@@ -899,9 +901,18 @@ def S_exact_time(
     complex or tuple[complex, dict]
         Exact-time S-matrix value, optionally with diagnostic details.
 
-    This implements the exact-time delta representation with
+    The exact-time disk can be integrated in two explicitly separated forms.
+    ``quadrature.radial_variable="chi"`` uses
 
-        q = q0 + R sin(chi) (cos theta, sin theta).
+        q = q0 + R sin(chi) (cos theta, sin theta),
+
+    while ``quadrature.radial_variable="kappa"`` uses the direct disk formula
+
+        q = q0 + kappa (cos theta, sin theta).
+
+    The kappa form can use a Gaussian-support cutoff.  This avoids missing
+    narrow transverse packet support when the exact-time disk radius is much
+    larger than the packet widths.
 
     The exponent is evaluated through the algebraically combined
     ``Xi0 + Xi_perp`` form to avoid artificial cancellations.
@@ -1028,58 +1039,130 @@ def S_exact_time(
         / _packet_denominator(packet1, packet2)
     )
 
-    (chi_nodes, chi_weights), (theta_nodes, theta_weights) = exact_time_nodes(quadrature)
+    radial_variable = _mode(
+        quadrature.radial_variable,
+        ("kappa", "chi"),
+        "quadrature.radial_variable",
+    )
+
+    def A_perp(q) -> complex:
+        K_minus_q = K_perp - q
+
+        if denominator_mode == "expanded":
+            if k3_perp_sq == 0.0:
+                raise ValueError("Expanded denominator requires nonzero |k3_perp|.")
+            denominator_factor = (
+                1.0 / k3_perp_sq
+                * (1.0 + 2.0 * np.dot(q, k3_perp) / k3_perp_sq)
+            )
+        else:
+            diff = k3_perp - q
+            denominator_factor = 1.0 / (
+                np.dot(diff, diff) + denominator_regulator * denominator_regulator
+            )
+
+        transverse_exp = np.exp(
+            -0.5 * np.dot(q, q) / (s1p * s1p)
+            -0.5 * np.dot(K_minus_q, K_minus_q) / (s2p * s2p)
+            + 1j * np.dot(b_perp, K_minus_q)
+        )
+        vortex_factor = (
+            _vortex_monomial(q, packet1.ell)
+            * _vortex_monomial(K_minus_q, packet2.ell)
+        )
+        return denominator_factor * transverse_exp * vortex_factor
 
     integral = complex_zero()
+    disk_curvature = None
 
-    for chi, w_chi in zip(chi_nodes, chi_weights):
-        sin_chi = np.sin(chi)
-        cos_chi = np.cos(chi)
-        rho = R * sin_chi
-
-        xi_plus = (-C_z + sqrt_Delta0 * cos_chi) / (2.0 * A_z)
-        xi_minus = (-C_z - sqrt_Delta0 * cos_chi) / (2.0 * A_z)
-
-        root_weight = (
-            np.exp(-B_z * xi_plus * xi_plus + D_z * xi_plus)
-            + np.exp(-B_z * xi_minus * xi_minus + D_z * xi_minus)
+    if radial_variable == "chi":
+        (chi_nodes, chi_weights), (theta_nodes, theta_weights) = exact_time_nodes(
+            quadrature
         )
+        radial_lower = 0.0
+        radial_upper = 0.5 * PI
+        radial_n = quadrature.n_chi
+        radial_method = quadrature.chi_method
 
-        radial_weight = w_chi * sin_chi
+        for chi, w_chi in zip(chi_nodes, chi_weights):
+            sin_chi = np.sin(chi)
+            cos_chi = np.cos(chi)
 
-        for theta, w_theta in zip(theta_nodes, theta_weights):
-            n = real_array([np.cos(theta), np.sin(theta)], shape=(2,))
-            q = q0 + rho * n
-            K_minus_q = K_perp - q
+            xi_plus = (-C_z + sqrt_Delta0 * cos_chi) / (2.0 * A_z)
+            xi_minus = (-C_z - sqrt_Delta0 * cos_chi) / (2.0 * A_z)
 
-            if denominator_mode == "expanded":
-                if k3_perp_sq == 0.0:
-                    raise ValueError("Expanded denominator requires nonzero |k3_perp|.")
-                denominator_factor = (
-                    1.0 / k3_perp_sq
-                    * (1.0 + 2.0 * np.dot(q, k3_perp) / k3_perp_sq)
-                )
-            else:
-                diff = k3_perp - q
-                denominator_factor = 1.0 / (
-                    np.dot(diff, diff) + denominator_regulator * denominator_regulator
-                )
-
-            transverse_exp = np.exp(
-                -0.5 * np.dot(q, q) / (s1p * s1p)
-                -0.5 * np.dot(K_minus_q, K_minus_q) / (s2p * s2p)
-                + 1j * np.dot(b_perp, K_minus_q)
+            root_weight = (
+                np.exp(-B_z * xi_plus * xi_plus + D_z * xi_plus)
+                + np.exp(-B_z * xi_minus * xi_minus + D_z * xi_minus)
             )
 
-            vortex_factor = (
-                _vortex_monomial(q, packet1.ell)
-                * _vortex_monomial(K_minus_q, packet2.ell)
+            disk_radius = R * sin_chi
+
+            for theta, w_theta in zip(theta_nodes, theta_weights):
+                n = real_array([np.cos(theta), np.sin(theta)], shape=(2,))
+                q = q0 + disk_radius * n
+                integral += w_chi * w_theta * sin_chi * root_weight * A_perp(q)
+
+        disk_factor = sqrt_Delta0 / (2.0 * A_z * eta_perp)
+
+    else:
+        sigma_eff = 1.0 / np.sqrt(1.0 / (s1p * s1p) + 1.0 / (s2p * s2p))
+        gaussian_center = (s1p * s1p / (s1p * s1p + s2p * s2p)) * K_perp
+        center_distance = np.linalg.norm(gaussian_center - q0)
+        disk_curvature = 2.0 * A_z * eta_perp / Delta0
+        disk_upper = R
+
+        if quadrature.kappa_n_sigma is None:
+            radial_lower = 0.0
+            radial_upper = disk_upper
+        else:
+            support = quadrature.kappa_n_sigma * sigma_eff
+            radial_lower = max(0.0, center_distance - support)
+            radial_upper = min(disk_upper, center_distance + support)
+
+        radial_n = quadrature.n_kappa
+        radial_method = quadrature.kappa_method
+        if radial_n is None:
+            radial_n = quadrature.n_chi
+        if radial_method is None:
+            radial_method = quadrature.chi_method
+
+        if radial_upper > radial_lower:
+            (kappa_nodes, kappa_weights), (theta_nodes, theta_weights) = (
+                exact_time_nodes(
+                    quadrature,
+                    radial_interval=(radial_lower, radial_upper),
+                )
             )
 
-            A_perp = denominator_factor * transverse_exp * vortex_factor
-            integral += w_theta * radial_weight * A_perp * root_weight
+            for kappa, w_kappa in zip(kappa_nodes, kappa_weights):
+                discriminant_factor = 1.0 - disk_curvature * kappa * kappa
+                if discriminant_factor <= 0.0:
+                    continue
 
-    disk_factor = sqrt_Delta0 / (2.0 * A_z * eta_perp)
+                sqrt_factor = np.sqrt(discriminant_factor)
+                xi_plus = (-C_z + sqrt_Delta0 * sqrt_factor) / (2.0 * A_z)
+                xi_minus = (-C_z - sqrt_Delta0 * sqrt_factor) / (2.0 * A_z)
+
+                root_weight = (
+                    np.exp(-B_z * xi_plus * xi_plus + D_z * xi_plus)
+                    + np.exp(-B_z * xi_minus * xi_minus + D_z * xi_minus)
+                )
+
+                for theta, w_theta in zip(theta_nodes, theta_weights):
+                    n = real_array([np.cos(theta), np.sin(theta)], shape=(2,))
+                    q = q0 + kappa * n
+                    integral += (
+                        w_kappa
+                        * w_theta
+                        * kappa
+                        / sqrt_factor
+                        * root_weight
+                        * A_perp(q)
+                    )
+
+        disk_factor = 1.0 / sqrt_Delta0
+
     S = prefactor * np.exp(longitudinal_exp_arg) * disk_factor * integral
 
     if return_details:
@@ -1111,6 +1194,13 @@ def S_exact_time(
             R=R,
             prefactor=prefactor,
             longitudinal_exp_arg=longitudinal_exp_arg,
+            q_disk_radius=R,
+            radial_variable=radial_variable,
+            radial_lower=radial_lower,
+            radial_upper=radial_upper,
+            radial_n=radial_n,
+            radial_method=radial_method,
+            disk_curvature=disk_curvature,
             disk_factor=disk_factor,
             integral=integral,
             denominator_mode=denominator_mode,
