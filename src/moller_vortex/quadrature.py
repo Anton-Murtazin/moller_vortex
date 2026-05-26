@@ -160,21 +160,38 @@ class ExactTimeQuadrature:
     Parameters
     ----------
     n_chi, n_theta:
-        Node counts for the regularized radial variable and azimuthal angle.
+        Node counts for the chi radial variable and azimuthal angle.
     chi_method, theta_method:
         Quadrature method names passed to ``nodes_and_weights``.
+    radial_variable:
+        ``"kappa"`` integrates the exact-time disk in the physical radial
+        variable ``kappa = |q - q0|``.  ``"chi"`` keeps the older
+        regularizing substitution ``kappa = R sin(chi)``.
+    n_kappa, kappa_method:
+        Node count and quadrature method for the direct kappa formula.  If
+        either is ``None``, the corresponding chi setting is used only as a
+        backward-compatible node-setting alias.
+    kappa_n_sigma:
+        For ``radial_variable="kappa"``, integrate only over the transverse
+        Gaussian support, using this many effective transverse widths around
+        the Gaussian center.  Set to ``None`` to use the full disk radius.
 
     Returns
     -------
     ExactTimeQuadrature
-        Immutable configuration object.  Actual nodes are built by
-        ``exact_time_nodes``.
+        Immutable configuration object.  Nodes are built by
+        ``exact_time_nodes``; the kappa case also needs a physical radial
+        interval.
     """
 
     n_chi: int = 65
     n_theta: int = 128
     chi_method: str = "boole"
     theta_method: str = "trapezoid"
+    radial_variable: str = "kappa"
+    n_kappa: int | None = None
+    kappa_method: str | None = None
+    kappa_n_sigma: float | None = 12.0
 
 
 @dataclass(frozen=True)
@@ -355,29 +372,54 @@ def probability_outer_nodes(
 
 def exact_time_nodes(
     quadrature: ExactTimeQuadrature,
+    radial_interval: tuple[float, float] | None = None,
 ) -> tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]:
-    """Return chi and theta nodes for S_exact_time.
+    """Return radial and theta nodes for S_exact_time.
 
     Parameters
     ----------
     quadrature:
         Exact-time quadrature settings.
+    radial_interval:
+        Physical ``kappa`` interval for ``radial_variable="kappa"``.  The
+        chi formula does not use this parameter.
 
     Returns
     -------
     tuple
-        Nodes and weights in the order ``chi``, ``theta``.
+        Nodes and weights in the order ``radial``, ``theta``.
     """
-    chi = nodes_and_weights(
-        (0.0, 0.5 * np.pi),
-        quadrature.n_chi,
-        method=quadrature.chi_method,
-        endpoint=True,
-    )
+    if quadrature.radial_variable == "chi":
+        radial = nodes_and_weights(
+            (0.0, 0.5 * np.pi),
+            quadrature.n_chi,
+            method=quadrature.chi_method,
+            endpoint=True,
+        )
+    elif quadrature.radial_variable == "kappa":
+        if radial_interval is None:
+            raise ValueError(
+                "radial_interval is required for exact-time kappa nodes."
+            )
+        n_kappa = quadrature.n_kappa
+        kappa_method = quadrature.kappa_method
+        if n_kappa is None:
+            n_kappa = quadrature.n_chi
+        if kappa_method is None:
+            kappa_method = quadrature.chi_method
+        radial = nodes_and_weights(
+            radial_interval,
+            n_kappa,
+            method=kappa_method,
+            endpoint=False,
+        )
+    else:
+        raise ValueError("radial_variable must be 'chi' or 'kappa'.")
+
     theta = nodes_and_weights(
         (0.0, 2.0 * np.pi),
         quadrature.n_theta,
         method=quadrature.theta_method,
         endpoint=False,
     )
-    return chi, theta
+    return radial, theta
