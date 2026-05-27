@@ -8,7 +8,6 @@ objects from all internal modules so that notebooks can use
 and access functions as mv.function_name.
 """
 
-from .accuracy import *
 from .amplitudes import *
 from .constants import *
 from .kinematics import *

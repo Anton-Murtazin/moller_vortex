@@ -5,9 +5,13 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from .accuracy import NumericalAccuracy, resolve_accuracy
 from .constants import PI, complex_array, real_array
 from .kinematics import vec2
+
+
+_TRANSVERSE_QUAD_EPSABS = 1.0e-10
+_TRANSVERSE_QUAD_EPSREL = 1.0e-10
+_TRANSVERSE_QUAD_LIMIT = 30
 
 
 def laguerre_derivative(a: int, b: int, c1: complex, c2: complex, c12: complex) -> complex:
@@ -329,7 +333,6 @@ def transverse_integral_numeric_quad(
     beta: complex,
     gamma: complex,
     n_phi: int = 64,
-    accuracy: NumericalAccuracy | None = None,
 ) -> complex:
     """Numerically integrate the first-order transverse integral.
 
@@ -343,8 +346,6 @@ def transverse_integral_numeric_quad(
         Transverse Gaussian coefficients.
     n_phi:
         Number of azimuthal trapezoid nodes.
-    accuracy:
-        Adaptive radial integration accuracy.
 
     Returns
     -------
@@ -353,8 +354,6 @@ def transverse_integral_numeric_quad(
         ``transverse_integral_explicit``.
     """
     from scipy.integrate import quad
-
-    accuracy = resolve_accuracy(accuracy)
 
     k3p = vec2(k3_perp)
     Kp = vec2(K_perp)
@@ -418,14 +417,18 @@ def transverse_integral_numeric_quad(
             lambda r: np.real(radial_integrand(r)),
             0.0,
             np.inf,
-            **accuracy.quad_kwargs(),
+            epsabs=_TRANSVERSE_QUAD_EPSABS,
+            epsrel=_TRANSVERSE_QUAD_EPSREL,
+            limit=_TRANSVERSE_QUAD_LIMIT,
         )[0]
 
         imag_part = quad(
             lambda r: np.imag(radial_integrand(r)),
             0.0,
             np.inf,
-            **accuracy.quad_kwargs(),
+            epsabs=_TRANSVERSE_QUAD_EPSABS,
+            epsrel=_TRANSVERSE_QUAD_EPSREL,
+            limit=_TRANSVERSE_QUAD_LIMIT,
         )[0]
 
         total += dphi * (real_part + 1j * imag_part)

@@ -10,9 +10,14 @@ import numpy as np
 from scipy.integrate import quad
 from scipy.special import kve
 
-from .accuracy import NumericalAccuracy, resolve_accuracy
 from .constants import ELECTRON_MASS, PI
 from .kinematics import energy, vec2, vec3
+
+
+NORMALIZATION_QUAD_EPSABS = 1.0e-16
+NORMALIZATION_QUAD_EPSREL = 1.0e-10
+NORMALIZATION_QUAD_LIMIT = 150
+
 
 @dataclass(frozen=True)
 class LGPacket:
@@ -85,7 +90,10 @@ def central_energy(packet: LGPacket, m: float = ELECTRON_MASS) -> float:
 def normalization_constant(
     packet: LGPacket,
     m: float = ELECTRON_MASS,
-    accuracy: NumericalAccuracy | None = None,
+    *,
+    quad_epsabs: float = NORMALIZATION_QUAD_EPSABS,
+    quad_epsrel: float = NORMALIZATION_QUAD_EPSREL,
+    quad_limit: int = NORMALIZATION_QUAD_LIMIT,
 ) -> float:
     """Compute the on-axis relativistic normalization constant N_ell.
 
@@ -95,8 +103,9 @@ def normalization_constant(
         Packet whose normalization constant is computed.
     m:
         Particle mass.
-    accuracy:
-        Numerical accuracy for the adaptive one-dimensional integral.
+    quad_epsabs, quad_epsrel, quad_limit:
+        Parameters passed directly to ``scipy.integrate.quad`` for the
+        adaptive one-dimensional normalization integral.
 
     Returns
     -------
@@ -112,7 +121,6 @@ def normalization_constant(
     This avoids large powers of k_perp and keeps the radial integral in a
     dimensionless variable.
     """
-    accuracy = resolve_accuracy(accuracy)
     packet = packet.checked()
 
     ell_abs = abs(packet.ell)
@@ -155,7 +163,9 @@ def normalization_constant(
         integrand,
         0.0,
         np.inf,
-        **accuracy.quad_kwargs(),
+        epsabs=quad_epsabs,
+        epsrel=quad_epsrel,
+        limit=quad_limit,
     )[0]
 
     norm_without_N = (
@@ -268,7 +278,6 @@ def resolve_normalizations(
     N1: float | None = None,
     N2: float | None = None,
     m: float = ELECTRON_MASS,
-    accuracy: NumericalAccuracy | None = None,
 ) -> tuple[float, float]:
     """Return explicit or newly computed normalization constants.
 
@@ -280,17 +289,14 @@ def resolve_normalizations(
         Optional precomputed normalization constants.
     m:
         Particle mass.
-    accuracy:
-        Numerical accuracy used when a normalization must be computed.
 
     Returns
     -------
     tuple[float, float]
         Normalization constants ``(N1, N2)``.
     """
-    accuracy = resolve_accuracy(accuracy)
     if N1 is None:
-        N1 = normalization_constant(packet1, m=m, accuracy=accuracy)
+        N1 = normalization_constant(packet1, m=m)
     if N2 is None:
-        N2 = normalization_constant(packet2, m=m, accuracy=accuracy)
+        N2 = normalization_constant(packet2, m=m)
     return N1, N2

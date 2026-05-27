@@ -15,7 +15,6 @@ from typing import Callable, Iterable
 
 import numpy as np
 
-from .accuracy import NumericalAccuracy, resolve_accuracy
 from .constants import (
     ELECTRON_CHARGE,
     ELECTRON_MASS,
@@ -33,6 +32,26 @@ from .quadrature import (
     probability_transverse_nodes,
 )
 from .smatrix import S_exact_time, S_impulse_closed_form, S_impulse_first_order
+
+
+def _print_progress(
+    *,
+    label: str,
+    completed: int,
+    total: int,
+    elapsed: float,
+    point_text: str | None = None,
+) -> None:
+    """Print one compact progress line for deterministic grid scans."""
+    percent = 100.0 * completed / total if total else 100.0
+    parts = [
+        f"{label}: point {completed:6d} / {total:6d}",
+        f"{percent:6.2f}%",
+        f"elapsed = {elapsed:.2f} s",
+    ]
+    if point_text is not None:
+        parts.append(point_text)
+    print(" | ".join(parts), flush=True)
 
 
 def _resolve_s_matrix(s_matrix: str | Callable):
@@ -71,7 +90,6 @@ def _prepare_probability_inputs(
     N2: float | None,
     m: float,
     e_charge: float,
-    accuracy: NumericalAccuracy | None,
     helicities: Iterable[float],
     explicit_spin_sum: bool,
     s_matrix: str | Callable,
@@ -89,8 +107,6 @@ def _prepare_probability_inputs(
         Optional precomputed normalization constants.
     m, e_charge:
         Particle mass and electric charge in project units.
-    accuracy:
-        Optional numerical accuracy configuration.
     helicities:
         Helicity labels to include in spin averaging.
     explicit_spin_sum:
@@ -103,7 +119,6 @@ def _prepare_probability_inputs(
     dict
         Validated values passed to lower-level probability routines.
     """
-    accuracy = resolve_accuracy(accuracy)
     packet1 = packet1.checked()
     packet2 = packet2.checked()
     N1, N2 = resolve_normalizations(
@@ -112,7 +127,6 @@ def _prepare_probability_inputs(
         N1=N1,
         N2=N2,
         m=m,
-        accuracy=accuracy,
     )
     return dict(
         packet1=packet1,
@@ -122,7 +136,6 @@ def _prepare_probability_inputs(
         N2=N2,
         m=m,
         e_charge=e_charge,
-        accuracy=accuracy,
         helicities=tuple(helicities),
         explicit_spin_sum=explicit_spin_sum,
         s_matrix=s_matrix,
@@ -141,7 +154,6 @@ def spin_averaged_s_abs2(
     N2: float,
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
-    accuracy: NumericalAccuracy | None = None,
     helicities: Iterable[float] = (-0.5, 0.5),
     explicit_spin_sum: bool = False,
     s_matrix: str | Callable = "closed",
@@ -161,8 +173,6 @@ def spin_averaged_s_abs2(
         Precomputed packet normalization constants.
     m, e_charge:
         Particle mass and electric charge in project units.
-    accuracy:
-        Numerical accuracy configuration passed to S-matrix routines.
     helicities:
         Iterable of helicity labels, normally ``(-0.5, 0.5)``.
     explicit_spin_sum:
@@ -181,7 +191,6 @@ def spin_averaged_s_abs2(
     The fast branch evaluates one helicity-conserving amplitude.  The explicit
     branch performs the literal 16-term sum and is useful as a diagnostic.
     """
-    accuracy = resolve_accuracy(accuracy)
     helicities = tuple(helicities)
     if len(helicities) != 2:
         raise ValueError("spin averaging expects exactly two helicity labels.")
@@ -212,7 +221,6 @@ def spin_averaged_s_abs2(
             N2=N2,
             m=m,
             e_charge=e_charge,
-            accuracy=accuracy,
             **kwargs,
         )
 
@@ -238,7 +246,6 @@ def spin_averaged_s_abs2(
                         N2=N2,
                         m=m,
                         e_charge=e_charge,
-                        accuracy=accuracy,
                         **kwargs,
                     )
                     total = total + np.abs(S) ** 2
@@ -257,7 +264,6 @@ def _diff_probability_resolved(
     N2: float,
     m: float,
     e_charge: float,
-    accuracy: NumericalAccuracy,
     helicities: tuple[float, ...],
     explicit_spin_sum: bool,
     s_matrix: str | Callable,
@@ -271,7 +277,7 @@ def _diff_probability_resolved(
         Fixed total final transverse momentum.
     quadrature:
         Inner probability quadrature settings.
-    packet1, packet2, impact_b, N1, N2, m, e_charge, accuracy, helicities,
+    packet1, packet2, impact_b, N1, N2, m, e_charge, helicities,
     explicit_spin_sum, s_matrix, s_matrix_kwargs:
         Validated values from ``_prepare_probability_inputs``.
 
@@ -322,7 +328,6 @@ def _diff_probability_resolved(
                         N2=N2,
                         m=m,
                         e_charge=e_charge,
-                        accuracy=accuracy,
                         helicities=helicities,
                         explicit_spin_sum=explicit_spin_sum,
                         s_matrix=s_matrix,
@@ -351,7 +356,6 @@ def _longitudinal_density_resolved(
     N2: float,
     m: float,
     e_charge: float,
-    accuracy: NumericalAccuracy,
     helicities: tuple[float, ...],
     explicit_spin_sum: bool,
     s_matrix: str | Callable,
@@ -367,7 +371,7 @@ def _longitudinal_density_resolved(
         Fixed total final transverse momentum.
     quadrature:
         Probability quadrature settings for ``k3_perp`` and ``phi``.
-    packet1, packet2, impact_b, N1, N2, m, e_charge, accuracy, helicities,
+    packet1, packet2, impact_b, N1, N2, m, e_charge, helicities,
     explicit_spin_sum, s_matrix, s_matrix_kwargs:
         Validated values from ``_prepare_probability_inputs``.
 
@@ -409,7 +413,6 @@ def _longitudinal_density_resolved(
                 N2=N2,
                 m=m,
                 e_charge=e_charge,
-                accuracy=accuracy,
                 helicities=helicities,
                 explicit_spin_sum=explicit_spin_sum,
                 s_matrix=s_matrix,
@@ -435,7 +438,6 @@ def diff_probability(
     N2: float | None = None,
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
-    accuracy: NumericalAccuracy | None = None,
     helicities: Iterable[float] = (-0.5, 0.5),
     explicit_spin_sum: bool = False,
     s_matrix: str | Callable = "closed",
@@ -457,8 +459,6 @@ def diff_probability(
         Optional precomputed normalization constants.
     m, e_charge:
         Particle mass and electric charge in project units.
-    accuracy:
-        Optional numerical accuracy configuration.
     helicities:
         Helicity labels used for spin averaging.
     explicit_spin_sum:
@@ -486,7 +486,6 @@ def diff_probability(
         N2=N2,
         m=m,
         e_charge=e_charge,
-        accuracy=accuracy,
         helicities=helicities,
         explicit_spin_sum=explicit_spin_sum,
         s_matrix=s_matrix,
@@ -508,7 +507,6 @@ def longitudinal_density(
     N2: float | None = None,
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
-    accuracy: NumericalAccuracy | None = None,
     helicities: Iterable[float] = (-0.5, 0.5),
     explicit_spin_sum: bool = False,
     s_matrix: str | Callable = "closed",
@@ -532,8 +530,6 @@ def longitudinal_density(
         Optional precomputed normalization constants.
     m, e_charge:
         Particle mass and electric charge in project units.
-    accuracy:
-        Optional numerical accuracy configuration.
     helicities:
         Helicity labels used for spin averaging.
     explicit_spin_sum:
@@ -555,7 +551,6 @@ def longitudinal_density(
         N2=N2,
         m=m,
         e_charge=e_charge,
-        accuracy=accuracy,
         helicities=helicities,
         explicit_spin_sum=explicit_spin_sum,
         s_matrix=s_matrix,
@@ -577,7 +572,6 @@ def longitudinal_density_grid(
     N2: float | None = None,
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
-    accuracy: NumericalAccuracy | None = None,
     helicities: Iterable[float] = (-0.5, 0.5),
     explicit_spin_sum: bool = False,
     s_matrix: str | Callable = "closed",
@@ -596,11 +590,12 @@ def longitudinal_density_grid(
         Incoming wave packets.
     quadrature:
         Probability quadrature settings for the remaining transverse integral.
-    impact_b, N1, N2, m, e_charge, accuracy, helicities,
+    impact_b, N1, N2, m, e_charge, helicities,
     explicit_spin_sum, s_matrix, s_matrix_kwargs:
         Same meaning as in ``longitudinal_density``.
     progress:
-        If True, print one progress line after each completed ``k4z`` row.
+        If True, print completed point count, total point count and percent
+        after each completed ``k4z`` row.
 
     Returns
     -------
@@ -618,7 +613,6 @@ def longitudinal_density_grid(
         N2=N2,
         m=m,
         e_charge=e_charge,
-        accuracy=accuracy,
         helicities=helicities,
         explicit_spin_sum=explicit_spin_sum,
         s_matrix=s_matrix,
@@ -627,10 +621,9 @@ def longitudinal_density_grid(
 
     values = real_empty((len(k4z_values), len(k3z_values)))
     start_total = time.perf_counter()
+    total_points = len(k4z_values) * len(k3z_values)
 
     for i4, k4z in enumerate(k4z_values):
-        start_row = time.perf_counter()
-
         for i3, k3z in enumerate(k3z_values):
             values[i4, i3] = _longitudinal_density_resolved(
                 k3z,
@@ -641,14 +634,14 @@ def longitudinal_density_grid(
             )
 
         if progress:
-            elapsed_row = time.perf_counter() - start_row
+            completed = (i4 + 1) * len(k3z_values)
             elapsed_total = time.perf_counter() - start_total
-            print(
-                f"row {i4 + 1:3d} / {len(k4z_values):3d} completed | "
-                f"k4z = {k4z:.12e} MeV | "
-                f"row time = {elapsed_row:.2f} s | "
-                f"total time = {elapsed_total:.2f} s",
-                flush=True,
+            _print_progress(
+                label="longitudinal_density_grid",
+                completed=completed,
+                total=total_points,
+                elapsed=elapsed_total,
+                point_text=f"row {i4 + 1} / {len(k4z_values)} | k4z = {k4z:.12e} MeV",
             )
 
     return values
@@ -666,11 +659,11 @@ def diff_probability_grid(
     N2: float | None = None,
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
-    accuracy: NumericalAccuracy | None = None,
     helicities: Iterable[float] = (-0.5, 0.5),
     explicit_spin_sum: bool = False,
     s_matrix: str | Callable = "closed",
     s_matrix_kwargs: dict | None = None,
+    progress: bool = False,
 ) -> np.ndarray:
     """Compute ``diff_probability`` on a rectangular ``Kx``/``Ky`` grid.
 
@@ -682,9 +675,12 @@ def diff_probability_grid(
         Incoming wave packets.
     quadrature:
         Probability quadrature settings.
-    impact_b, N1, N2, m, e_charge, accuracy, helicities,
+    impact_b, N1, N2, m, e_charge, helicities,
     explicit_spin_sum, s_matrix, s_matrix_kwargs:
         Same meaning as in ``diff_probability``.
+    progress:
+        If True, print completed point count, total point count and percent
+        after each completed ``Ky`` row.
 
     Returns
     -------
@@ -701,7 +697,6 @@ def diff_probability_grid(
         N2=N2,
         m=m,
         e_charge=e_charge,
-        accuracy=accuracy,
         helicities=helicities,
         explicit_spin_sum=explicit_spin_sum,
         s_matrix=s_matrix,
@@ -709,11 +704,24 @@ def diff_probability_grid(
     )
 
     values = real_empty((len(Ky_values), len(Kx_values)))
+    start_total = time.perf_counter()
+    total_points = len(Ky_values) * len(Kx_values)
 
     for iy, Ky in enumerate(Ky_values):
         for ix, Kx in enumerate(Kx_values):
             K_perp = real_array([Kx, Ky], shape=(2,))
             values[iy, ix] = _diff_probability_resolved(K_perp, quadrature, **inputs)
+
+        if progress:
+            completed = (iy + 1) * len(Kx_values)
+            elapsed_total = time.perf_counter() - start_total
+            _print_progress(
+                label="diff_probability_grid",
+                completed=completed,
+                total=total_points,
+                elapsed=elapsed_total,
+                point_text=f"row {iy + 1} / {len(Ky_values)} | Ky = {Ky:.12e} MeV",
+            )
 
     return values
 
@@ -721,6 +729,8 @@ def diff_probability_grid(
 def _outer_K_moments(
     quadrature: ProbabilityQuadrature,
     inputs: dict,
+    *,
+    progress: bool = False,
 ) -> tuple[np.float64, np.float64]:
     """Return total probability and the ``K_y`` numerator.
 
@@ -730,6 +740,9 @@ def _outer_K_moments(
         Probability quadrature settings including the outer ``K_perp`` axes.
     inputs:
         Validated values from ``_prepare_probability_inputs``.
+    progress:
+        If True, print completed outer ``K_perp`` point count, total point
+        count and percent after each completed radial ``K`` row.
 
     Returns
     -------
@@ -740,8 +753,10 @@ def _outer_K_moments(
 
     probability = FLOAT_DTYPE(0.0)
     ky_numerator = FLOAT_DTYPE(0.0)
+    start_total = time.perf_counter()
+    total_points = len(K_nodes) * len(phi_nodes)
 
-    for K, w_K in zip(K_nodes, K_weights):
+    for iK, (K, w_K) in enumerate(zip(K_nodes, K_weights)):
         for phi_K, w_phi_K in zip(phi_nodes, phi_weights):
             Kx = K * np.cos(phi_K)
             Ky = K * np.sin(phi_K)
@@ -752,6 +767,17 @@ def _outer_K_moments(
 
             probability = probability + weight * w_value
             ky_numerator = ky_numerator + weight * Ky * w_value
+
+        if progress:
+            completed = (iK + 1) * len(phi_nodes)
+            elapsed_total = time.perf_counter() - start_total
+            _print_progress(
+                label="outer_K_moments",
+                completed=completed,
+                total=total_points,
+                elapsed=elapsed_total,
+                point_text=f"K row {iK + 1} / {len(K_nodes)} | K = {K:.12e} MeV",
+            )
 
     return probability, ky_numerator
 
@@ -766,11 +792,11 @@ def total_probability(
     N2: float | None = None,
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
-    accuracy: NumericalAccuracy | None = None,
     helicities: Iterable[float] = (-0.5, 0.5),
     explicit_spin_sum: bool = False,
     s_matrix: str | Callable = "closed",
     s_matrix_kwargs: dict | None = None,
+    progress: bool = False,
 ) -> np.float64:
     """Compute the total probability in the selected ``K_perp`` domain.
 
@@ -780,9 +806,12 @@ def total_probability(
         Incoming wave packets.
     quadrature:
         Probability quadrature settings including ``K_perp_range``.
-    impact_b, N1, N2, m, e_charge, accuracy, helicities,
+    impact_b, N1, N2, m, e_charge, helicities,
     explicit_spin_sum, s_matrix, s_matrix_kwargs:
         Same meaning as in ``diff_probability``.
+    progress:
+        If True, print completed outer ``K_perp`` point count, total point
+        count and percent during the outer integration.
 
     Returns
     -------
@@ -797,13 +826,12 @@ def total_probability(
         N2=N2,
         m=m,
         e_charge=e_charge,
-        accuracy=accuracy,
         helicities=helicities,
         explicit_spin_sum=explicit_spin_sum,
         s_matrix=s_matrix,
         s_matrix_kwargs=s_matrix_kwargs,
     )
-    probability, _ = _outer_K_moments(quadrature, inputs)
+    probability, _ = _outer_K_moments(quadrature, inputs, progress=progress)
     return probability
 
 
@@ -817,11 +845,11 @@ def Ky_average(
     N2: float | None = None,
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
-    accuracy: NumericalAccuracy | None = None,
     helicities: Iterable[float] = (-0.5, 0.5),
     explicit_spin_sum: bool = False,
     s_matrix: str | Callable = "closed",
     s_matrix_kwargs: dict | None = None,
+    progress: bool = False,
 ) -> np.float64:
     """Compute ``<K_y>`` in the selected transverse ``K_perp`` domain.
 
@@ -831,9 +859,12 @@ def Ky_average(
         Incoming wave packets.
     quadrature:
         Probability quadrature settings including ``K_perp_range``.
-    impact_b, N1, N2, m, e_charge, accuracy, helicities,
+    impact_b, N1, N2, m, e_charge, helicities,
     explicit_spin_sum, s_matrix, s_matrix_kwargs:
         Same meaning as in ``diff_probability``.
+    progress:
+        If True, print completed outer ``K_perp`` point count, total point
+        count and percent during the outer integration.
 
     Returns
     -------
@@ -848,11 +879,10 @@ def Ky_average(
         N2=N2,
         m=m,
         e_charge=e_charge,
-        accuracy=accuracy,
         helicities=helicities,
         explicit_spin_sum=explicit_spin_sum,
         s_matrix=s_matrix,
         s_matrix_kwargs=s_matrix_kwargs,
     )
-    probability, numerator = _outer_K_moments(quadrature, inputs)
+    probability, numerator = _outer_K_moments(quadrature, inputs, progress=progress)
     return numerator / probability

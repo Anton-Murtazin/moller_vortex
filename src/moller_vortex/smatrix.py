@@ -7,7 +7,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .accuracy import NumericalAccuracy, resolve_accuracy
 from .constants import (
     ELECTRON_CHARGE,
     ELECTRON_MASS,
@@ -235,7 +234,6 @@ def S_impulse_common_factor(
     impact_b=(0.0, 0.0),
     N1: float | None = None,
     N2: float | None = None,
-    accuracy: NumericalAccuracy | None = None,
 ) -> tuple[complex, dict]:
     """Return the common prefactor outside the transverse integral.
 
@@ -253,8 +251,6 @@ def S_impulse_common_factor(
         Transverse impact parameter.
     N1, N2:
         Optional precomputed packet normalizations.
-    accuracy:
-        Numerical accuracy configuration for missing normalization constants.
 
     Returns
     -------
@@ -268,14 +264,12 @@ def S_impulse_common_factor(
         return complex_zero(), {"reason": "helicity delta is zero"}
 
     b = vec2(impact_b)
-    accuracy = resolve_accuracy(accuracy)
     N1, N2 = resolve_normalizations(
         packet1,
         packet2,
         N1=N1,
         N2=N2,
         m=m,
-        accuracy=accuracy,
     )
 
     pars = impulse_parameters(packet1, packet2, k3, k4, b, m)
@@ -329,7 +323,6 @@ def S_impulse_closed_form(
     impact_b=(0.0, 0.0),
     N1: float | None = None,
     N2: float | None = None,
-    accuracy: NumericalAccuracy | None = None,
     return_details: bool = False,
 ) -> complex | tuple[complex, dict]:
     """Compute the closed impulse S-matrix with analytic transverse integral.
@@ -348,8 +341,6 @@ def S_impulse_closed_form(
         Transverse impact parameter.
     N1, N2:
         Optional precomputed packet normalizations.
-    accuracy:
-        Numerical accuracy configuration.
     return_details:
         If True, return ``(S, details)``.
 
@@ -372,7 +363,6 @@ def S_impulse_closed_form(
         impact_b=impact_b,
         N1=N1,
         N2=N2,
-        accuracy=accuracy,
     )
 
     if "reason" in details:
@@ -658,7 +648,6 @@ def S_impulse_first_order(
     time_mode: str = "resummed",
     time_step: float | None = None,
     time_step_scale: float = 1.0e-4,
-    accuracy: NumericalAccuracy | None = None,
     return_details: bool = False,
 ) -> complex | tuple[complex, dict]:
     """S-matrix beyond strict impulse approximation.
@@ -689,8 +678,6 @@ def S_impulse_first_order(
             + i(2 Omega b / c^2 - 2a / c^2 + d / c) I1
             + b / c^2 I2.
 
-    accuracy:
-        Numerical accuracy configuration for missing normalization constants.
     return_details:
         If True, return ``(S, details)``.
 
@@ -714,7 +701,6 @@ def S_impulse_first_order(
         impact_b=impact_b,
         N1=N1,
         N2=N2,
-        accuracy=accuracy,
     )
 
     if "reason" in details:
@@ -865,7 +851,6 @@ def S_exact_time(
     quadrature: ExactTimeQuadrature | None = None,
     denominator_mode: str = "expanded",
     denominator_regulator: float = 0.0,
-    accuracy: NumericalAccuracy | None = None,
     return_details: bool = False,
 ):
     """S-matrix with the time integral evaluated by the delta representation.
@@ -891,8 +876,6 @@ def S_exact_time(
         ``"exact"`` for the regulated exact denominator.
     denominator_regulator:
         Regulator added in exact-denominator mode.
-    accuracy:
-        Numerical accuracy configuration for missing normalization constants.
     return_details:
         If True, return ``(S, details)``.
 
@@ -919,7 +902,6 @@ def S_exact_time(
     """
     packet1 = packet1.checked()
     packet2 = packet2.checked()
-    accuracy = resolve_accuracy(accuracy)
     quadrature = ExactTimeQuadrature() if quadrature is None else quadrature
     denominator_mode = _mode(denominator_mode, ("expanded", "exact"), "denominator_mode")
 
@@ -1026,7 +1008,6 @@ def S_exact_time(
         N1=N1,
         N2=N2,
         m=m,
-        accuracy=accuracy,
     )
 
     prefactor = (
@@ -1228,7 +1209,6 @@ def S_impulse_numeric_transverse_quad(
     N1: float | None = None,
     N2: float | None = None,
     n_phi: int = 64,
-    accuracy: NumericalAccuracy | None = None,
     return_details: bool = False,
 ) -> complex | tuple[complex, dict]:
     """Compute the impulse S matrix with numerical transverse integration.
@@ -1249,8 +1229,6 @@ def S_impulse_numeric_transverse_quad(
         Optional precomputed packet normalizations.
     n_phi:
         Number of azimuthal nodes in the diagnostic transverse integration.
-    accuracy:
-        Numerical accuracy configuration for adaptive radial integrals.
     return_details:
         If True, return ``(S, details)``.
 
@@ -1259,8 +1237,6 @@ def S_impulse_numeric_transverse_quad(
     complex or tuple[complex, dict]
         S-matrix value computed with numerical transverse integration.
     """
-    accuracy = resolve_accuracy(accuracy)
-
     common_factor, details = S_impulse_common_factor(
         k3,
         k4,
@@ -1275,7 +1251,6 @@ def S_impulse_numeric_transverse_quad(
         impact_b=impact_b,
         N1=N1,
         N2=N2,
-        accuracy=accuracy,
     )
 
     if "reason" in details:
@@ -1294,7 +1269,6 @@ def S_impulse_numeric_transverse_quad(
         details["beta"],
         details["gamma"],
         n_phi=n_phi,
-        accuracy=accuracy,
     )
 
     S = common_factor * Iperp_numeric

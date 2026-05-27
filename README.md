@@ -82,7 +82,22 @@ For a one-off calculation, `N1` and `N2` may be omitted; the S-matrix functions 
 
 ## Central numerical settings
 
-Use `NumericalAccuracy` for adaptive one-dimensional integrations and `ProbabilityQuadrature` / `ExactTimeQuadrature` for deterministic node counts and integration ranges.
+The standard normalization call uses the built-in adaptive `quad` settings:
+
+```python
+N = mv.normalization_constant(packet)
+```
+
+The S-matrix and probability routines do not accept a shared tolerance object.
+For scans, compute `N1` and `N2` explicitly once and pass them into the
+S-matrix/probability functions. If `N1` or `N2` is omitted, the package computes
+the missing normalization with the standard settings. If one particular
+normalization check needs different adaptive tolerances, pass `quad_epsabs`,
+`quad_epsrel`, or `quad_limit` directly in that `normalization_constant(...)`
+call.
+
+Use `ProbabilityQuadrature` / `ExactTimeQuadrature` for deterministic node
+counts and integration ranges.
 
 The quadrature dataclasses only store settings. Nodes and weights are built by:
 
@@ -101,20 +116,15 @@ For `S_exact_time`, choose the radial formula with
 
 For probability integrals the finite-axis defaults are composite Boole, so use node counts of the form `n = 4*m + 1`, for example `9`, `17`, or `25`. Periodic angular axes use endpoint-free trapezoid quadrature by default.
 
+Long grid-style probability routines accept `progress=True` to print completed
+points, total points, percent and elapsed time while the calculation runs.
+
 ## Built-in numerical checks
 
 The project does not use a separate pytest-style test folder. Numerical checks are ordinary functions inside the package and can be called directly from a notebook or script. They do not decide whether a test has “passed” or “failed”; they only print and return the numerical errors.
 
 ```python
-accuracy = mv.NumericalAccuracy(
-    quad_epsabs=1.0e-10,
-    quad_epsrel=1.0e-10,
-    quad_limit=300,
-    root_residual_atol=1.0e-10,
-)
-
 results = mv.run_all_checks(
-    accuracy=accuracy,
     n_phi=16,
     verbose=True,
 )
@@ -123,9 +133,9 @@ results = mv.run_all_checks(
 Individual checks are also available:
 
 ```python
-mv.check_normalization(accuracy=accuracy)
-mv.check_transverse_integral(accuracy=accuracy, n_phi=16)
-mv.check_smatrix(accuracy=accuracy, n_phi=16)
+mv.check_normalization()
+mv.check_transverse_integral(n_phi=16)
+mv.check_smatrix(n_phi=16)
 ```
 
 The returned dictionaries contain raw relative errors. The interpretation of those errors is left to the analysis notebook. The checks compare:
@@ -151,7 +161,6 @@ matrix against the same formula with numerical transverse integration.
 ```text
 src/moller_vortex/
   constants.py     units, dtypes, electron mass and charge
-  accuracy.py      global numerical integration accuracy and scipy quad kwargs
   kinematics.py    vector checks, energies, helicity labels
   packets.py       LGPacket and normalization constants
   amplitudes.py    impulse Moller amplitude

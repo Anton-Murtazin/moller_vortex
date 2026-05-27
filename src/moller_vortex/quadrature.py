@@ -6,7 +6,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .constants import real_full, real_zeros
+from .constants import HBARC_MEV_NM, real_full, real_zeros
+
+
+_DEFAULT_SIGMA1_PAR = HBARC_MEV_NM / 5.0
+_DEFAULT_SIGMA2_PAR = HBARC_MEV_NM / 1.0
 
 
 def legendre_nodes_and_weights(interval: tuple[float, float], n: int) -> tuple[np.ndarray, np.ndarray]:
@@ -186,12 +190,12 @@ class ExactTimeQuadrature:
 
     n_chi: int = 65
     n_theta: int = 128
+    n_kappa: int | None = 257
     chi_method: str = "boole"
     theta_method: str = "trapezoid"
     radial_variable: str = "kappa"
-    n_kappa: int | None = None
-    kappa_method: str | None = None
-    kappa_n_sigma: float | None = 12.0
+    kappa_method: str = "boole"
+    kappa_n_sigma: float | None = 10.0
 
 
 @dataclass(frozen=True)
@@ -211,6 +215,10 @@ class ProbabilityQuadrature:
         Quadrature rule names. Finite non-periodic axes default to
         ``"boole"``; periodic angular axes default to ``"trapezoid"``.
 
+    The default inner ranges and node counts are the current working setup
+    for the 10 MeV / -10 MeV packet example.  Override any field locally with
+    ``dataclasses.replace`` or by passing explicit constructor arguments.
+
     Returns
     -------
     ProbabilityQuadrature
@@ -218,14 +226,20 @@ class ProbabilityQuadrature:
         ``probability_inner_nodes`` and ``probability_outer_nodes``.
     """
 
-    k3_perp_range: tuple[float, float] | None = None
-    k3z_range: tuple[float, float] | None = None
-    k4z_range: tuple[float, float] | None = None
+    k3_perp_range: tuple[float, float] | None = (0.010, 0.050)
+    k3z_range: tuple[float, float] | None = (
+        10.0 - 50.0 * _DEFAULT_SIGMA1_PAR,
+        10.0 + 50.0 * _DEFAULT_SIGMA1_PAR,
+    )
+    k4z_range: tuple[float, float] | None = (
+        -10.0 - 50.0 * _DEFAULT_SIGMA2_PAR,
+        -10.0 + 50.0 * _DEFAULT_SIGMA2_PAR,
+    )
     K_perp_range: tuple[float, float] | None = None
-    n_k3_perp: int | None = None
-    n_phi: int | None = None
-    n_k3z: int | None = None
-    n_k4z: int | None = None
+    n_k3_perp: int | None = 25
+    n_phi: int | None = 10
+    n_k3z: int | None = 25
+    n_k4z: int | None = 25
     n_K_perp: int | None = None
     n_K_phi: int | None = None
     k3_perp_method: str = "boole"

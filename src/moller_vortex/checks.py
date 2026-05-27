@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from .accuracy import NumericalAccuracy, resolve_accuracy
 from .constants import real_array
 from .kinematics import relative_error
 from .packets import LGPacket, normalization_constant, spherical_normalization_constant
@@ -44,15 +43,12 @@ def _print_errors(title: str, errors: dict[str, float]) -> None:
 
 
 def check_normalization(
-    accuracy: NumericalAccuracy | None = None,
     verbose: bool = True,
 ) -> dict[str, float]:
     """Return errors for normalization in the spherical analytic limit.
 
     Parameters
     ----------
-    accuracy:
-        Numerical accuracy for adaptive normalization integrals.
     verbose:
         If True, print a compact error table.
 
@@ -65,8 +61,6 @@ def check_normalization(
     expression valid at sigma_perp = sigma_par. No acceptance threshold is
     applied; the function only returns the numerical relative errors.
     """
-    accuracy = resolve_accuracy(accuracy)
-
     packets = [
         LGPacket(ell=0, sigma_perp=0.70, sigma_par=0.70, kbar_z=4.0),
         LGPacket(ell=2, sigma_perp=0.70, sigma_par=0.70, kbar_z=4.0),
@@ -75,7 +69,7 @@ def check_normalization(
 
     errors = {}
     for packet in packets:
-        N_numeric = normalization_constant(packet, accuracy=accuracy)
+        N_numeric = normalization_constant(packet)
         N_closed = spherical_normalization_constant(packet)
         key = f"spherical normalization, ell={packet.ell}"
         errors[key] = relative_error(N_numeric, N_closed)
@@ -121,7 +115,6 @@ def check_laguerre_derivative(verbose: bool = True) -> dict[str, float]:
 
 def check_transverse_integral(
     n_phi: int = 16,
-    accuracy: NumericalAccuracy | None = None,
     verbose: bool = True,
 ) -> dict[str, float]:
     """Return errors for closed transverse expressions.
@@ -130,8 +123,6 @@ def check_transverse_integral(
     ----------
     n_phi:
         Number of angular nodes for the direct numerical transverse check.
-    accuracy:
-        Numerical accuracy for the radial adaptive integrations.
     verbose:
         If True, print a compact error table.
 
@@ -144,8 +135,6 @@ def check_transverse_integral(
     acceptance threshold is applied; the function only returns numerical
     relative errors.
     """
-    accuracy = resolve_accuracy(accuracy)
-
     k3_perp = real_array([1.10, 0.45], shape=(2,))
     K_perp = real_array([0.25, -0.18], shape=(2,))
     b_perp = real_array([0.08, -0.04], shape=(2,))
@@ -189,7 +178,6 @@ def check_transverse_integral(
             beta,
             gamma,
             n_phi=n_phi,
-            accuracy=accuracy,
         )
         key = f"transverse integral, ell1={ell1}, ell2={ell2}"
         errors[key] = relative_error(analytic, numeric)
@@ -202,7 +190,6 @@ def check_transverse_integral(
 
 def check_smatrix(
     n_phi: int = 16,
-    accuracy: NumericalAccuracy | None = None,
     verbose: bool = True,
 ) -> dict[str, float]:
     """Return error for closed impulse S matrix vs numerical transverse integration.
@@ -211,8 +198,6 @@ def check_smatrix(
     ----------
     n_phi:
         Number of angular nodes for numerical transverse quadrature.
-    accuracy:
-        Numerical accuracy for normalization and radial integrations.
     verbose:
         If True, print a compact error table.
 
@@ -221,13 +206,11 @@ def check_smatrix(
     dict[str, float]
         Relative error between closed and numerical-transverse S matrices.
     """
-    accuracy = resolve_accuracy(accuracy)
-
     packet1 = LGPacket(ell=1, sigma_perp=0.18, sigma_par=0.35, kbar_z=20.0)
     packet2 = LGPacket(ell=-1, sigma_perp=0.18, sigma_par=0.35, kbar_z=-20.0)
 
-    N1 = normalization_constant(packet1, accuracy=accuracy)
-    N2 = normalization_constant(packet2, accuracy=accuracy)
+    N1 = normalization_constant(packet1)
+    N2 = normalization_constant(packet2)
 
     impact_b = real_array([0.3, 0.0], shape=(2,))
     k3 = real_array([0.8, 0.10, 19.7], shape=(3,))
@@ -245,7 +228,6 @@ def check_smatrix(
         impact_b=impact_b,
         N1=N1,
         N2=N2,
-        accuracy=accuracy,
     )
 
     S_numeric = S_impulse_numeric_transverse_quad(
@@ -261,7 +243,6 @@ def check_smatrix(
         N1=N1,
         N2=N2,
         n_phi=n_phi,
-        accuracy=accuracy,
     )
 
     errors = {
@@ -276,7 +257,6 @@ def check_smatrix(
 
 def run_all_checks(
     n_phi: int = 16,
-    accuracy: NumericalAccuracy | None = None,
     verbose: bool = True,
 ) -> dict[str, dict[str, float]]:
     """Run all built-in numerical comparisons and return their errors.
@@ -285,8 +265,6 @@ def run_all_checks(
     ----------
     n_phi:
         Number of angular nodes used by transverse numerical checks.
-    accuracy:
-        Numerical accuracy shared by adaptive integrations.
     verbose:
         If True, print each check table.
 
@@ -295,11 +273,8 @@ def run_all_checks(
     dict[str, dict[str, float]]
         Nested mapping from check group to relative-error values.
     """
-    accuracy = resolve_accuracy(accuracy)
-
     results = {
         "normalization": check_normalization(
-            accuracy=accuracy,
             verbose=verbose,
         ),
         "laguerre_derivative": check_laguerre_derivative(
@@ -307,12 +282,10 @@ def run_all_checks(
         ),
         "transverse_integral": check_transverse_integral(
             n_phi=n_phi,
-            accuracy=accuracy,
             verbose=verbose,
         ),
         "smatrix": check_smatrix(
             n_phi=n_phi,
-            accuracy=accuracy,
             verbose=verbose,
         ),
     }
