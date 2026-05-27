@@ -38,14 +38,14 @@ For calculations, scans and plots, open:
 analysis_workspace.ipynb
 ```
 
-The notebook imports both:
+The notebook imports:
 
 ```python
 import moller_vortex as mv
-from moller_vortex import *
 ```
 
-so project functions can be used either as `mv.function_name(...)` or directly as `function_name(...)`.
+so project functions are used as `mv.function_name(...)`. This keeps the
+notebook namespace explicit and easier to inspect.
 
 ## Minimal workflow
 
@@ -112,7 +112,9 @@ For `S_exact_time`, choose the radial formula with
 `ExactTimeQuadrature(radial_variable="kappa")` or
 `ExactTimeQuadrature(radial_variable="chi")`.  The direct kappa formula uses
 `n_kappa/kappa_method` and passes its physical radial interval into
-`exact_time_nodes`; the chi formula uses `n_chi/chi_method`.
+`exact_time_nodes` in the scalar diagnostic path. The vectorized batch path maps
+per-point kappa intervals from unit nodes internally. The chi formula uses
+`n_chi/chi_method`.
 
 For probability integrals the finite-axis defaults are composite Boole, so use node counts of the form `n = 4*m + 1`, for example `9`, `17`, or `25`. Periodic angular axes use endpoint-free trapezoid quadrature by default.
 
@@ -121,7 +123,10 @@ points, total points, percent and elapsed time while the calculation runs.
 
 ## Built-in numerical checks
 
-The project does not use a separate pytest-style test folder. Numerical checks are ordinary functions inside the package and can be called directly from a notebook or script. They do not decide whether a test has “passed” or “failed”; they only print and return the numerical errors.
+The project does not use a separate pytest-style test folder. Numerical checks
+are ordinary functions inside the package and can be called directly from a
+notebook or script. They do not decide whether a test has "passed" or "failed";
+they only print and return the numerical errors.
 
 ```python
 results = mv.run_all_checks(
@@ -134,7 +139,9 @@ Individual checks are also available:
 
 ```python
 mv.check_normalization()
+mv.check_laguerre_derivative()
 mv.check_transverse_integral(n_phi=16)
+mv.check_vectorized_paths()
 mv.check_smatrix(n_phi=16)
 ```
 
@@ -147,8 +154,10 @@ $$
 $$
 
 against the closed Bessel-K expression;
-2. analytic transverse expressions against direct numerical polar integration;
-3. closed impulse
+2. the Laguerre-derivative formula against the direct finite sum;
+3. analytic transverse expressions against direct numerical polar integration;
+4. vectorized S-matrix/probability paths against scalar diagnostic paths;
+5. closed impulse
 
 $$
 S
@@ -167,7 +176,7 @@ src/moller_vortex/
   transverse.py    analytic and direct numerical transverse integrals
   smatrix.py       closed, first-order, exact-time and numerical-check S-matrix routines
   checks.py        ordinary check functions for notebooks and scripts
-  probability.py   numerical integration of the squared module of S matrix related to the transverse total momentum
+  probability.py   numerical integration of the squared modulus of S matrix related to the transverse total momentum
   quadrature.py    deterministic quadrature rules and central quadrature dataclasses
 
 notebooks/

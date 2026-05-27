@@ -300,6 +300,147 @@ def transverse_integral_explicit(
     return (value, case) if return_case else value
 
 
+def transverse_integral_explicit_grid(
+    ell1: int,
+    ell2: int,
+    k3x,
+    k3y,
+    K_perp,
+    b_perp,
+    alpha: complex,
+    beta: complex,
+    gamma: complex,
+):
+    """Vectorized closed first-order transverse integral.
+
+    This is the array-valued counterpart of ``transverse_integral_explicit``.
+    It keeps exactly the same branch formulas, but accepts broadcastable
+    arrays for the final-particle transverse momentum components.
+    """
+    k3_abs_sq = k3x * k3x + k3y * k3y
+    if np.any(k3_abs_sq == 0.0):
+        raise ZeroDivisionError("The expanded transverse denominator requires k3_perp != 0.")
+
+    Kx = K_perp[0] + 0.0j
+    Ky = K_perp[1] + 0.0j
+    bx = b_perp[0] + 0.0j
+    by = b_perp[1] + 0.0j
+
+    A = alpha + gamma
+    if A == 0.0:
+        raise ZeroDivisionError("alpha + gamma is exactly zero.")
+
+    chi_plus = (k3x - 1j * k3y) / k3_abs_sq
+    chi_minus = (k3x + 1j * k3y) / k3_abs_sq
+
+    J0x = (beta + gamma) * Kx - 1j * bx
+    J0y = (beta + gamma) * Ky - 1j * by
+    J0_sq = J0x * J0x + J0y * J0y
+    K_sq = Kx * Kx + Ky * Ky
+
+    p_plus = (J0x + 1j * J0y) / A
+    p_minus = (J0x - 1j * J0y) / A
+    K_plus = Kx + 1j * Ky
+    K_minus = Kx - 1j * Ky
+    q_plus = K_plus - p_plus
+    q_minus = K_minus - p_minus
+
+    prefactor = (
+        2.0
+        * PI
+        / (k3_abs_sq * A)
+        * np.exp(J0_sq / (2.0 * A) - gamma * K_sq / 2.0)
+    )
+
+    if ell1 == 0 and ell2 == 0:
+        bracket = 1.0 + chi_plus * p_plus + chi_minus * p_minus
+        return prefactor * bracket
+
+    if ell1 == 0:
+        m = abs(ell2)
+        if ell2 > 0:
+            bracket = q_plus ** m
+            bracket += chi_plus * p_plus * q_plus ** m
+            bracket += chi_minus * (
+                p_minus * q_plus ** m
+                - 2.0 * m * q_plus ** (m - 1) / A
+            )
+        else:
+            bracket = q_minus ** m
+            bracket += chi_plus * (
+                p_plus * q_minus ** m
+                - 2.0 * m * q_minus ** (m - 1) / A
+            )
+            bracket += chi_minus * p_minus * q_minus ** m
+        return prefactor * bracket
+
+    if ell2 == 0:
+        n = abs(ell1)
+        if ell1 > 0:
+            bracket = p_plus ** n
+            bracket += chi_plus * p_plus ** (n + 1)
+            bracket += chi_minus * (
+                p_minus * p_plus ** n
+                + 2.0 * n * p_plus ** (n - 1) / A
+            )
+        else:
+            bracket = p_minus ** n
+            bracket += chi_plus * (
+                p_plus * p_minus ** n
+                + 2.0 * n * p_minus ** (n - 1) / A
+            )
+            bracket += chi_minus * p_minus ** (n + 1)
+        return prefactor * bracket
+
+    n = abs(ell1)
+    m = abs(ell2)
+
+    if ell1 > 0 and ell2 > 0:
+        bracket = p_plus ** n * q_plus ** m
+        bracket += chi_plus * p_plus ** (n + 1) * q_plus ** m
+        bracket += chi_minus * (
+            p_minus * p_plus ** n * q_plus ** m
+            + 2.0 * n * p_plus ** (n - 1) * q_plus ** m / A
+            - 2.0 * m * p_plus ** n * q_plus ** (m - 1) / A
+        )
+        return prefactor * bracket
+
+    if ell1 < 0 and ell2 < 0:
+        bracket = p_minus ** n * q_minus ** m
+        bracket += chi_plus * (
+            p_plus * p_minus ** n * q_minus ** m
+            + 2.0 * n * p_minus ** (n - 1) * q_minus ** m / A
+            - 2.0 * m * p_minus ** n * q_minus ** (m - 1) / A
+        )
+        bracket += chi_minus * p_minus ** (n + 1) * q_minus ** m
+        return prefactor * bracket
+
+    mu = 2.0 / A
+
+    if ell1 > 0 and ell2 < 0:
+        c1 = p_plus
+        c2 = q_minus
+        K_opposite = K_minus
+        bracket = laguerre_derivative(n, m, c1, c2, mu)
+        bracket += chi_plus * laguerre_derivative(n + 1, m, c1, c2, mu)
+        bracket += chi_minus * (
+            K_opposite * laguerre_derivative(n, m, c1, c2, mu)
+            - laguerre_derivative(n, m + 1, c1, c2, mu)
+        )
+        return prefactor * bracket
+
+    c1 = p_minus
+    c2 = q_plus
+    K_opposite = K_plus
+    bracket = laguerre_derivative(n, m, c1, c2, mu)
+    bracket += chi_minus * laguerre_derivative(n + 1, m, c1, c2, mu)
+    bracket += chi_plus * (
+        K_opposite * laguerre_derivative(n, m, c1, c2, mu)
+        - laguerre_derivative(n, m + 1, c1, c2, mu)
+    )
+    return prefactor * bracket
+
+
 def vortex_factor(z: complex, ell: int) -> complex:
     """Return the Cartesian vortex monomial.
 

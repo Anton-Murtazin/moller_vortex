@@ -31,7 +31,14 @@ from .quadrature import (
     probability_outer_nodes,
     probability_transverse_nodes,
 )
-from .smatrix import S_exact_time, S_impulse_closed_form, S_impulse_first_order
+from .smatrix import (
+    S_exact_time,
+    S_exact_time_grid,
+    S_impulse_closed_grid,
+    S_impulse_closed_form,
+    S_impulse_first_order_grid,
+    S_impulse_first_order,
+)
 
 
 def _print_progress(
@@ -79,6 +86,120 @@ def _resolve_s_matrix(s_matrix: str | Callable):
     raise ValueError(
         "s_matrix must be 'closed', 'first_order', 'exact_time', or a callable."
     )
+
+
+def _vectorized_s_abs2_grid(
+    k3x,
+    k3y,
+    k3z,
+    k4x,
+    k4y,
+    k4z,
+    packet1: LGPacket,
+    packet2: LGPacket,
+    impact_b,
+    N1: float,
+    N2: float,
+    m: float,
+    e_charge: float,
+    helicities: tuple[float, ...],
+    explicit_spin_sum: bool,
+    s_matrix: str | Callable,
+    s_matrix_kwargs: dict | None,
+):
+    """Return vectorized |S|^2 for supported S-matrix selectors."""
+    if callable(s_matrix) or explicit_spin_sum or len(helicities) != 2:
+        return None
+
+    kwargs = {} if s_matrix_kwargs is None else dict(s_matrix_kwargs)
+    kwargs.pop("return_details", None)
+    lam1 = helicities[0]
+    lam2 = helicities[1]
+
+    if s_matrix == "closed":
+        if kwargs:
+            return None
+        S = S_impulse_closed_grid(
+            k3x,
+            k3y,
+            k3z,
+            k4x,
+            k4y,
+            k4z,
+            packet1,
+            packet2,
+            lam1=lam1,
+            lam2=lam2,
+            lam3=lam1,
+            lam4=lam2,
+            impact_b=impact_b,
+            N1=N1,
+            N2=N2,
+            m=m,
+            e_charge=e_charge,
+        )
+        return np.abs(S) ** 2
+
+    if s_matrix == "first_order":
+        allowed = {"time_mode", "time_step", "time_step_scale"}
+        if any(key not in allowed for key in kwargs):
+            return None
+        S = S_impulse_first_order_grid(
+            k3x,
+            k3y,
+            k3z,
+            k4x,
+            k4y,
+            k4z,
+            packet1,
+            packet2,
+            lam1=lam1,
+            lam2=lam2,
+            lam3=lam1,
+            lam4=lam2,
+            impact_b=impact_b,
+            N1=N1,
+            N2=N2,
+            m=m,
+            e_charge=e_charge,
+            **kwargs,
+        )
+        return np.abs(S) ** 2
+
+    if s_matrix == "exact_time":
+        allowed = {
+            "quadrature",
+            "denominator_mode",
+            "denominator_regulator",
+            "batch_size",
+        }
+        if any(key not in allowed for key in kwargs):
+            return None
+        if kwargs.get("batch_size") is None:
+            kwargs.pop("batch_size", None)
+        S = S_exact_time_grid(
+            k3x,
+            k3y,
+            k3z,
+            k4x,
+            k4y,
+            k4z,
+            packet1,
+            packet2,
+            lam1=lam1,
+            lam2=lam2,
+            lam3=lam1,
+            lam4=lam2,
+            impact_b=impact_b,
+            N1=N1,
+            N2=N2,
+            m=m,
+            e_charge=e_charge,
+            **kwargs,
+        )
+        return np.abs(S) ** 2
+
+    return None
 
 
 def _prepare_probability_inputs(
@@ -253,6 +374,137 @@ def spin_averaged_s_abs2(
     return FLOAT_DTYPE(0.25) * total
 
 
+def _diff_probability_scalar_fallback(
+    K,
+    rho_nodes,
+    rho_weights,
+    phi_nodes,
+    phi_weights,
+    z3_nodes,
+    z3_weights,
+    z4_nodes,
+    z4_weights,
+    *,
+    packet1: LGPacket,
+    packet2: LGPacket,
+    impact_b,
+    N1: float,
+    N2: float,
+    m: float,
+    e_charge: float,
+    helicities: tuple[float, ...],
+    explicit_spin_sum: bool,
+    s_matrix: str | Callable,
+    s_matrix_kwargs: dict | None,
+) -> np.float64:
+    """Scalar diagnostic path for unsupported S-matrix selectors."""
+    total = FLOAT_DTYPE(0.0)
+    phase_space_const = 1.0 / (2.0 * PI) ** 6
+
+    for rho, w_rho in zip(rho_nodes, rho_weights):
+        for phi, w_phi in zip(phi_nodes, phi_weights):
+            cos_phi = np.cos(phi)
+            sin_phi = np.sin(phi)
+
+            k3x = rho * cos_phi
+            k3y = rho * sin_phi
+            k4x = K[0] - k3x
+            k4y = K[1] - k3y
+            k4_perp_sq = k4x * k4x + k4y * k4y
+
+            for k3z, w_z3 in zip(z3_nodes, z3_weights):
+                E3 = np.sqrt(m * m + rho * rho + k3z * k3z)
+
+                for k4z, w_z4 in zip(z4_nodes, z4_weights):
+                    E4 = np.sqrt(m * m + k4_perp_sq + k4z * k4z)
+                    k3 = real_array([k3x, k3y, k3z], shape=(3,))
+                    k4 = real_array([k4x, k4y, k4z], shape=(3,))
+                    s_abs2 = spin_averaged_s_abs2(
+                        k3,
+                        k4,
+                        packet1,
+                        packet2,
+                        impact_b=impact_b,
+                        N1=N1,
+                        N2=N2,
+                        m=m,
+                        e_charge=e_charge,
+                        helicities=helicities,
+                        explicit_spin_sum=explicit_spin_sum,
+                        s_matrix=s_matrix,
+                        s_matrix_kwargs=s_matrix_kwargs,
+                    )
+
+                    weight = w_rho * w_phi * w_z3 * w_z4
+                    phase_space = phase_space_const / (4.0 * E3 * E4)
+                    total = total + weight * rho * phase_space * s_abs2
+
+    return total
+
+
+def _longitudinal_density_scalar_fallback(
+    k3z: float,
+    k4z: float,
+    K,
+    rho_nodes,
+    rho_weights,
+    phi_nodes,
+    phi_weights,
+    *,
+    packet1: LGPacket,
+    packet2: LGPacket,
+    impact_b,
+    N1: float,
+    N2: float,
+    m: float,
+    e_charge: float,
+    helicities: tuple[float, ...],
+    explicit_spin_sum: bool,
+    s_matrix: str | Callable,
+    s_matrix_kwargs: dict | None,
+) -> np.float64:
+    """Scalar diagnostic transverse-density path for unsupported selectors."""
+    total = FLOAT_DTYPE(0.0)
+    phase_space_const = 1.0 / (2.0 * PI) ** 6
+
+    for rho, w_rho in zip(rho_nodes, rho_weights):
+        for phi, w_phi in zip(phi_nodes, phi_weights):
+            cos_phi = np.cos(phi)
+            sin_phi = np.sin(phi)
+
+            k3x = rho * cos_phi
+            k3y = rho * sin_phi
+            k4x = K[0] - k3x
+            k4y = K[1] - k3y
+
+            E3 = np.sqrt(m * m + rho * rho + k3z * k3z)
+            E4 = np.sqrt(m * m + k4x * k4x + k4y * k4y + k4z * k4z)
+
+            k3 = real_array([k3x, k3y, k3z], shape=(3,))
+            k4 = real_array([k4x, k4y, k4z], shape=(3,))
+            s_abs2 = spin_averaged_s_abs2(
+                k3,
+                k4,
+                packet1,
+                packet2,
+                impact_b=impact_b,
+                N1=N1,
+                N2=N2,
+                m=m,
+                e_charge=e_charge,
+                helicities=helicities,
+                explicit_spin_sum=explicit_spin_sum,
+                s_matrix=s_matrix,
+                s_matrix_kwargs=s_matrix_kwargs,
+            )
+
+            weight = w_rho * w_phi
+            phase_space = phase_space_const / (4.0 * E3 * E4)
+            total = total + weight * rho * phase_space * s_abs2
+
+    return total
+
+
 def _diff_probability_resolved(
     K_perp,
     quadrature: ProbabilityQuadrature,
@@ -295,52 +547,77 @@ def _diff_probability_resolved(
         (z4_nodes, z4_weights),
     ) = probability_inner_nodes(quadrature)
 
-    total = FLOAT_DTYPE(0.0)
     phase_space_const = 1.0 / (2.0 * PI) ** 6
 
-    for rho, w_rho in zip(rho_nodes, rho_weights):
-        for phi, w_phi in zip(phi_nodes, phi_weights):
-            cos_phi = np.cos(phi)
-            sin_phi = np.sin(phi)
+    rho_grid = rho_nodes[:, None, None, None]
+    phi_cos = np.cos(phi_nodes)[None, :, None, None]
+    phi_sin = np.sin(phi_nodes)[None, :, None, None]
+    z3_grid = z3_nodes[None, None, :, None]
+    z4_grid = z4_nodes[None, None, None, :]
 
-            k3x = rho * cos_phi
-            k3y = rho * sin_phi
+    k3x_grid = rho_grid * phi_cos
+    k3y_grid = rho_grid * phi_sin
+    k4x_grid = K[0] - k3x_grid
+    k4y_grid = K[1] - k3y_grid
 
-            k4x = K[0] - k3x
-            k4y = K[1] - k3y
-            k4_perp_sq = k4x * k4x + k4y * k4y
+    s_abs2_grid = _vectorized_s_abs2_grid(
+        k3x_grid,
+        k3y_grid,
+        z3_grid,
+        k4x_grid,
+        k4y_grid,
+        z4_grid,
+        packet1,
+        packet2,
+        impact_b,
+        N1,
+        N2,
+        m,
+        e_charge,
+        helicities,
+        explicit_spin_sum,
+        s_matrix,
+        s_matrix_kwargs,
+    )
 
-            for k3z, w_z3 in zip(z3_nodes, z3_weights):
-                E3 = np.sqrt(m * m + rho * rho + k3z * k3z)
+    if s_abs2_grid is not None:
+        E3 = np.sqrt(
+            m * m + k3x_grid * k3x_grid + k3y_grid * k3y_grid + z3_grid * z3_grid
+        )
+        E4 = np.sqrt(
+            m * m + k4x_grid * k4x_grid + k4y_grid * k4y_grid + z4_grid * z4_grid
+        )
+        weights = (
+            rho_weights[:, None, None, None]
+            * phi_weights[None, :, None, None]
+            * z3_weights[None, None, :, None]
+            * z4_weights[None, None, None, :]
+        )
+        phase_space = phase_space_const / (4.0 * E3 * E4)
+        return FLOAT_DTYPE(np.sum(weights * rho_grid * phase_space * s_abs2_grid))
 
-                for k4z, w_z4 in zip(z4_nodes, z4_weights):
-                    E4 = np.sqrt(m * m + k4_perp_sq + k4z * k4z)
-
-                    k3 = real_array([k3x, k3y, k3z], shape=(3,))
-                    k4 = real_array([k4x, k4y, k4z], shape=(3,))
-                    s_abs2 = spin_averaged_s_abs2(
-                        k3,
-                        k4,
-                        packet1,
-                        packet2,
-                        impact_b=impact_b,
-                        N1=N1,
-                        N2=N2,
-                        m=m,
-                        e_charge=e_charge,
-                        helicities=helicities,
-                        explicit_spin_sum=explicit_spin_sum,
-                        s_matrix=s_matrix,
-                        s_matrix_kwargs=s_matrix_kwargs,
-                    )
-
-                    weight = w_rho * w_phi * w_z3 * w_z4
-                    measure = rho
-                    phase_space = phase_space_const / (4.0 * E3 * E4)
-
-                    total = total + weight * measure * phase_space * s_abs2
-
-    return total
+    return _diff_probability_scalar_fallback(
+        K,
+        rho_nodes,
+        rho_weights,
+        phi_nodes,
+        phi_weights,
+        z3_nodes,
+        z3_weights,
+        z4_nodes,
+        z4_weights,
+        packet1=packet1,
+        packet2=packet2,
+        impact_b=impact_b,
+        N1=N1,
+        N2=N2,
+        m=m,
+        e_charge=e_charge,
+        helicities=helicities,
+        explicit_spin_sum=explicit_spin_sum,
+        s_matrix=s_matrix,
+        s_matrix_kwargs=s_matrix_kwargs,
+    )
 
 
 def _longitudinal_density_resolved(
@@ -385,46 +662,70 @@ def _longitudinal_density_resolved(
         quadrature
     )
 
-    total = FLOAT_DTYPE(0.0)
     phase_space_const = 1.0 / (2.0 * PI) ** 6
 
-    for rho, w_rho in zip(rho_nodes, rho_weights):
-        for phi, w_phi in zip(phi_nodes, phi_weights):
-            cos_phi = np.cos(phi)
-            sin_phi = np.sin(phi)
+    rho_grid = rho_nodes[:, None, None, None]
+    phi_cos = np.cos(phi_nodes)[None, :, None, None]
+    phi_sin = np.sin(phi_nodes)[None, :, None, None]
+    z3_grid = np.asarray(k3z, dtype=FLOAT_DTYPE)[None, None, None, None]
+    z4_grid = np.asarray(k4z, dtype=FLOAT_DTYPE)[None, None, None, None]
 
-            k3x = rho * cos_phi
-            k3y = rho * sin_phi
-            k4x = K[0] - k3x
-            k4y = K[1] - k3y
+    k3x_grid = rho_grid * phi_cos
+    k3y_grid = rho_grid * phi_sin
+    k4x_grid = K[0] - k3x_grid
+    k4y_grid = K[1] - k3y_grid
 
-            E3 = np.sqrt(m * m + rho * rho + k3z * k3z)
-            E4 = np.sqrt(m * m + k4x * k4x + k4y * k4y + k4z * k4z)
+    s_abs2_grid = _vectorized_s_abs2_grid(
+        k3x_grid,
+        k3y_grid,
+        z3_grid,
+        k4x_grid,
+        k4y_grid,
+        z4_grid,
+        packet1,
+        packet2,
+        impact_b,
+        N1,
+        N2,
+        m,
+        e_charge,
+        helicities,
+        explicit_spin_sum,
+        s_matrix,
+        s_matrix_kwargs,
+    )
 
-            k3 = real_array([k3x, k3y, k3z], shape=(3,))
-            k4 = real_array([k4x, k4y, k4z], shape=(3,))
-            s_abs2 = spin_averaged_s_abs2(
-                k3,
-                k4,
-                packet1,
-                packet2,
-                impact_b=impact_b,
-                N1=N1,
-                N2=N2,
-                m=m,
-                e_charge=e_charge,
-                helicities=helicities,
-                explicit_spin_sum=explicit_spin_sum,
-                s_matrix=s_matrix,
-                s_matrix_kwargs=s_matrix_kwargs,
-            )
+    if s_abs2_grid is not None:
+        E3 = np.sqrt(
+            m * m + k3x_grid * k3x_grid + k3y_grid * k3y_grid + z3_grid * z3_grid
+        )
+        E4 = np.sqrt(
+            m * m + k4x_grid * k4x_grid + k4y_grid * k4y_grid + z4_grid * z4_grid
+        )
+        weights = rho_weights[:, None, None, None] * phi_weights[None, :, None, None]
+        phase_space = phase_space_const / (4.0 * E3 * E4)
+        return FLOAT_DTYPE(np.sum(weights * rho_grid * phase_space * s_abs2_grid))
 
-            weight = w_rho * w_phi
-            measure = rho
-            phase_space = phase_space_const / (4.0 * E3 * E4)
-            total = total + weight * measure * phase_space * s_abs2
-
-    return total
+    return _longitudinal_density_scalar_fallback(
+        k3z,
+        k4z,
+        K,
+        rho_nodes,
+        rho_weights,
+        phi_nodes,
+        phi_weights,
+        packet1=packet1,
+        packet2=packet2,
+        impact_b=impact_b,
+        N1=N1,
+        N2=N2,
+        m=m,
+        e_charge=e_charge,
+        helicities=helicities,
+        explicit_spin_sum=explicit_spin_sum,
+        s_matrix=s_matrix,
+        s_matrix_kwargs=s_matrix_kwargs,
+    )
 
 
 def diff_probability(

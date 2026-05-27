@@ -1,4 +1,4 @@
-"""Plane-wave Møller amplitudes in impulse approximation."""
+"""Plane-wave Moller amplitudes in impulse approximation."""
 
 from __future__ import annotations
 

@@ -519,11 +519,11 @@ For the direct kappa formula use `n_kappa` and `kappa_method`:
 ```python
 exact_quad = mv.ExactTimeQuadrature(
     radial_variable="kappa",
-    n_kappa=65,
+    n_kappa=257,
     n_theta=128,
     kappa_method="boole",
     theta_method="trapezoid",
-    kappa_n_sigma=12.0,
+    kappa_n_sigma=10.0,
 )
 ```
 
@@ -547,13 +547,25 @@ chi formula no interval is needed:
 (theta_nodes, theta_weights) = mv.exact_time_nodes(exact_quad)
 ```
 
-For the direct kappa formula, `S_exact_time(...)` computes the physical radial
-interval and passes it into `exact_time_nodes(...)`.
+For the direct kappa formula, the scalar diagnostic path computes the physical
+radial interval and passes it into `exact_time_nodes(...)`. The vectorized batch
+path uses the same node convention but maps each point's physical kappa interval
+from unit nodes internally, because the useful interval can differ from one
+external phase-space point to another.
 
-This corresponds to the regularized disk integral
+The direct kappa formula corresponds to
 
 $$
-\int_0^{2\pi} d\theta \int_0^{\pi/2} d\chi\,\sin\chi.
+\int_0^{2\pi}d\theta
+\int d\kappa\,
+\frac{\kappa}{\sqrt{1-\mathrm{disk\_curvature}\,\kappa^2}}.
+$$
+
+The chi formula corresponds to
+
+$$
+\int_0^{2\pi}d\theta
+\int_0^{\pi/2}d\chi\,\sin\chi.
 $$
 
 ---
@@ -666,13 +678,13 @@ Example for parameters close to the cited plots:
 ```python
 quadrature = mv.ProbabilityQuadrature(
     k3_perp_range=(0.010, 0.050),
-    k3z_range=(10.0 - 8.0 * sigma1_par, 10.0 + 8.0 * sigma1_par),
-    k4z_range=(-10.0 - 8.0 * sigma2_par, -10.0 + 8.0 * sigma2_par),
+    k3z_range=(10.0 - 50.0 * sigma1_par, 10.0 + 50.0 * sigma1_par),
+    k4z_range=(-10.0 - 50.0 * sigma2_par, -10.0 + 50.0 * sigma2_par),
     K_perp_range=(0.0, 3.0e-4),
-    n_k3_perp=9,
-    n_phi=24,
-    n_k3z=9,
-    n_k4z=9,
+    n_k3_perp=25,
+    n_phi=10,
+    n_k3z=25,
+    n_k4z=25,
     n_K_perp=9,
     n_K_phi=24,
 )
@@ -1007,13 +1019,13 @@ N2 = mv.normalization_constant(packet2)
 
 quadrature = mv.ProbabilityQuadrature(
     k3_perp_range=(0.010, 0.050),
-    k3z_range=(10.0 - 8.0 * sigma1_par, 10.0 + 8.0 * sigma1_par),
-    k4z_range=(-10.0 - 8.0 * sigma2_par, -10.0 + 8.0 * sigma2_par),
+    k3z_range=(10.0 - 50.0 * sigma1_par, 10.0 + 50.0 * sigma1_par),
+    k4z_range=(-10.0 - 50.0 * sigma2_par, -10.0 + 50.0 * sigma2_par),
     K_perp_range=(0.0, 3.0e-4),
-    n_k3_perp=9,
-    n_phi=24,
-    n_k3z=9,
-    n_k4z=9,
+    n_k3_perp=25,
+    n_phi=10,
+    n_k3z=25,
+    n_k4z=25,
     n_K_perp=9,
     n_K_phi=24,
 )
@@ -1185,6 +1197,8 @@ n_k3z
 n_k4z
 n_K_perp
 n_K_phi
+n_theta
+n_kappa
 ```
 
 A sensible workflow is:
@@ -1193,6 +1207,10 @@ A sensible workflow is:
 2. Increase the internal quadrature for `diff_probability`.
 3. Increase the outer $$K$$-quadrature for `total_probability` and `Ky_average`.
 4. Check convergence at representative points before running expensive full scans.
+
+For `s_matrix="exact_time"`, pass `s_matrix_kwargs={"batch_size": ...}` when
+memory or runtime needs tuning. Larger batches reduce Python overhead but build
+larger temporary arrays of shape roughly `(batch_size, n_kappa, n_theta)`.
 
 ---
 
