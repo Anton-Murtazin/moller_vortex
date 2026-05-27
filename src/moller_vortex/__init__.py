@@ -1,20 +1,169 @@
 """Moller scattering of on-axis vortex packets.
 
-The project is intended as research code. The package-level namespace re-exports
-objects from all internal modules so that notebooks can use
+The package-level namespace intentionally re-exports the public research API so
+that notebooks can use
 
     import moller_vortex as mv
 
-and access functions as mv.function_name.
+and access the main functions as ``mv.function_name``.
 """
 
-from .accuracy import *
-from .amplitudes import *
-from .constants import *
-from .kinematics import *
-from .packets import *
-from .smatrix import *
-from .transverse import *
-from .checks import *
-from .probability import *
-from .quadrature import *
+from .amplitudes import moller_amplitude_impulse
+from .checks import (
+    check_laguerre_derivative,
+    check_normalization,
+    check_smatrix,
+    check_transverse_integral,
+    check_vectorized_paths,
+    run_all_checks,
+)
+from .constants import (
+    ALPHA_EM,
+    COMPLEX_DTYPE,
+    ELECTRON_CHARGE,
+    ELECTRON_MASS,
+    FLOAT_DTYPE,
+    HBARC_MEV_NM,
+    NM_TO_MEV_INV,
+    PI,
+    ComplexArray,
+    RealArray,
+    complex_array,
+    complex_zero,
+    real_array,
+    real_empty,
+    real_full,
+    real_zeros,
+    spatial_width_nm_to_momentum_mev,
+)
+from .kinematics import (
+    absolute_error,
+    energy,
+    helicity,
+    kron_delta,
+    relative_error,
+    vec2,
+    vec3,
+)
+from .packets import (
+    LGPacket,
+    central_energy,
+    lg_packet_phi,
+    normalization_constant,
+    resolve_normalizations,
+    spherical_normalization_constant,
+)
+from .probability import (
+    Ky_average,
+    diff_probability,
+    diff_probability_grid,
+    longitudinal_density,
+    longitudinal_density_grid,
+    spin_averaged_s_abs2,
+    total_probability,
+)
+from .quadrature import (
+    ExactTimeQuadrature,
+    ProbabilityQuadrature,
+    boole_nodes_and_weights,
+    exact_time_nodes,
+    legendre_nodes_and_weights,
+    nodes_and_weights,
+    probability_inner_nodes,
+    probability_outer_nodes,
+    probability_transverse_nodes,
+    trapezoid_nodes_and_weights,
+)
+from .smatrix import (
+    FirstOrderLongitudinal,
+    S_exact_time,
+    S_exact_time_grid,
+    S_impulse_closed_form,
+    S_impulse_closed_grid,
+    S_impulse_common_factor,
+    S_impulse_first_order,
+    S_impulse_first_order_grid,
+    S_impulse_numeric_transverse_quad,
+    impulse_parameters,
+)
+from .transverse import (
+    laguerre_derivative,
+    laguerre_derivative_sum,
+    transverse_integral_explicit,
+    transverse_integral_explicit_grid,
+    transverse_integral_numeric_quad,
+    vortex_factor,
+)
+
+__all__ = [
+    "ALPHA_EM",
+    "COMPLEX_DTYPE",
+    "ComplexArray",
+    "ELECTRON_CHARGE",
+    "ELECTRON_MASS",
+    "ExactTimeQuadrature",
+    "FLOAT_DTYPE",
+    "FirstOrderLongitudinal",
+    "HBARC_MEV_NM",
+    "Ky_average",
+    "LGPacket",
+    "NM_TO_MEV_INV",
+    "PI",
+    "ProbabilityQuadrature",
+    "RealArray",
+    "S_exact_time",
+    "S_exact_time_grid",
+    "S_impulse_closed_form",
+    "S_impulse_closed_grid",
+    "S_impulse_common_factor",
+    "S_impulse_first_order",
+    "S_impulse_first_order_grid",
+    "S_impulse_numeric_transverse_quad",
+    "absolute_error",
+    "boole_nodes_and_weights",
+    "central_energy",
+    "check_laguerre_derivative",
+    "check_normalization",
+    "check_smatrix",
+    "check_transverse_integral",
+    "check_vectorized_paths",
+    "complex_array",
+    "complex_zero",
+    "diff_probability",
+    "diff_probability_grid",
+    "energy",
+    "exact_time_nodes",
+    "helicity",
+    "impulse_parameters",
+    "kron_delta",
+    "laguerre_derivative",
+    "laguerre_derivative_sum",
+    "legendre_nodes_and_weights",
+    "lg_packet_phi",
+    "longitudinal_density",
+    "longitudinal_density_grid",
+    "moller_amplitude_impulse",
+    "nodes_and_weights",
+    "normalization_constant",
+    "probability_inner_nodes",
+    "probability_outer_nodes",
+    "probability_transverse_nodes",
+    "real_array",
+    "real_empty",
+    "real_full",
+    "real_zeros",
+    "relative_error",
+    "resolve_normalizations",
+    "run_all_checks",
+    "spatial_width_nm_to_momentum_mev",
+    "spherical_normalization_constant",
+    "spin_averaged_s_abs2",
+    "total_probability",
+    "trapezoid_nodes_and_weights",
+    "transverse_integral_explicit",
+    "transverse_integral_explicit_grid",
+    "transverse_integral_numeric_quad",
+    "vec2",
+    "vec3",
+    "vortex_factor",
+]

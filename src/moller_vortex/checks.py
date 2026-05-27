@@ -10,11 +10,19 @@ from __future__ import annotations
 
 import numpy as np
 
-from .accuracy import NumericalAccuracy, resolve_accuracy
-from .constants import real_array
+from .constants import HBARC_MEV_NM, real_array
 from .kinematics import relative_error
 from .packets import LGPacket, normalization_constant, spherical_normalization_constant
-from .smatrix import S_impulse_closed_form, S_impulse_numeric_transverse_quad
+from .quadrature import ExactTimeQuadrature, ProbabilityQuadrature
+from .smatrix import (
+    S_exact_time,
+    S_exact_time_grid,
+    S_impulse_closed_form,
+    S_impulse_closed_grid,
+    S_impulse_first_order,
+    S_impulse_first_order_grid,
+    S_impulse_numeric_transverse_quad,
+)
 from .transverse import (
     laguerre_derivative,
     laguerre_derivative_sum,
@@ -43,16 +51,21 @@ def _print_errors(title: str, errors: dict[str, float]) -> None:
         print(f"  {name:<45} {error:.6e}")
 
 
+def _max_relative_grid_error(candidate, reference) -> float:
+    """Return the maximum elementwise relative error for array comparisons."""
+    candidate = np.asarray(candidate)
+    reference = np.asarray(reference)
+    denominator = np.where(reference == 0, 1.0, np.abs(reference))
+    return float(np.max(np.abs(candidate - reference) / denominator))
+
+
 def check_normalization(
-    accuracy: NumericalAccuracy | None = None,
     verbose: bool = True,
 ) -> dict[str, float]:
     """Return errors for normalization in the spherical analytic limit.
 
     Parameters
     ----------
-    accuracy:
-        Numerical accuracy for adaptive normalization integrals.
     verbose:
         If True, print a compact error table.
 
@@ -65,8 +78,6 @@ def check_normalization(
     expression valid at sigma_perp = sigma_par. No acceptance threshold is
     applied; the function only returns the numerical relative errors.
     """
-    accuracy = resolve_accuracy(accuracy)
-
     packets = [
         LGPacket(ell=0, sigma_perp=0.70, sigma_par=0.70, kbar_z=4.0),
         LGPacket(ell=2, sigma_perp=0.70, sigma_par=0.70, kbar_z=4.0),
@@ -75,7 +86,7 @@ def check_normalization(
 
     errors = {}
     for packet in packets:
-        N_numeric = normalization_constant(packet, accuracy=accuracy)
+        N_numeric = normalization_constant(packet)
         N_closed = spherical_normalization_constant(packet)
         key = f"spherical normalization, ell={packet.ell}"
         errors[key] = relative_error(N_numeric, N_closed)
@@ -121,7 +132,6 @@ def check_laguerre_derivative(verbose: bool = True) -> dict[str, float]:
 
 def check_transverse_integral(
     n_phi: int = 16,
-    accuracy: NumericalAccuracy | None = None,
     verbose: bool = True,
 ) -> dict[str, float]:
     """Return errors for closed transverse expressions.
@@ -130,8 +140,6 @@ def check_transverse_integral(
     ----------
     n_phi:
         Number of angular nodes for the direct numerical transverse check.
-    accuracy:
-        Numerical accuracy for the radial adaptive integrations.
     verbose:
         If True, print a compact error table.
 
@@ -144,8 +152,6 @@ def check_transverse_integral(
     acceptance threshold is applied; the function only returns numerical
     relative errors.
     """
-    accuracy = resolve_accuracy(accuracy)
-
     k3_perp = real_array([1.10, 0.45], shape=(2,))
     K_perp = real_array([0.25, -0.18], shape=(2,))
     b_perp = real_array([0.08, -0.04], shape=(2,))
@@ -189,7 +195,6 @@ def check_transverse_integral(
             beta,
             gamma,
             n_phi=n_phi,
-            accuracy=accuracy,
         )
         key = f"transverse integral, ell1={ell1}, ell2={ell2}"
         errors[key] = relative_error(analytic, numeric)
@@ -200,9 +205,268 @@ def check_transverse_integral(
     return errors
 
 
+def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
+    """Return errors for vectorized S-matrix and probability paths.
+
+    Parameters
+    ----------
+    verbose:
+        If True, print a compact error table.
+
+    Returns
+    -------
+    dict[str, float]
+        Relative errors comparing vectorized code against scalar diagnostic
+        evaluations on a small deterministic grid.
+
+    This check is not a physics benchmark.  It protects the implementation
+    against array-broadcasting, weighting and batching mistakes in the fast
+    paths used by probability scans.
+    """
+    from .probability import diff_probability
+
+    packet1 = LGPacket(ell=1, sigma_perp=0.18, sigma_par=0.35, kbar_z=20.0)
+    packet2 = LGPacket(ell=-1, sigma_perp=0.18, sigma_par=0.35, kbar_z=-20.0)
+    N1 = normalization_constant(packet1)
+    N2 = normalization_constant(packet2)
+    impact_b = real_array([0.3, -0.1], shape=(2,))
+
+    k3 = real_array(
+        [
+            [0.80, 0.10, 19.70],
+            [1.10, -0.20, 20.20],
+            [0.55, 0.35, 19.90],
+        ]
+    )
+    k4 = real_array(
+        [
+            [-0.55, -0.08, -19.60],
+            [-0.75, 0.25, -20.10],
+            [-0.35, -0.20, -19.80],
+        ]
+    )
+
+    closed_grid = S_impulse_closed_grid(
+        k3[:, 0],
+        k3[:, 1],
+        k3[:, 2],
+        k4[:, 0],
+        k4[:, 1],
+        k4[:, 2],
+        packet1,
+        packet2,
+        lam1=0.5,
+        lam2=0.5,
+        lam3=0.5,
+        lam4=0.5,
+        impact_b=impact_b,
+        N1=N1,
+        N2=N2,
+    )
+    closed_scalar = np.array(
+        [
+            S_impulse_closed_form(
+                k3_i,
+                k4_i,
+                packet1,
+                packet2,
+                lam1=0.5,
+                lam2=0.5,
+                lam3=0.5,
+                lam4=0.5,
+                impact_b=impact_b,
+                N1=N1,
+                N2=N2,
+            )
+            for k3_i, k4_i in zip(k3, k4)
+        ]
+    )
+
+    first_grid = S_impulse_first_order_grid(
+        k3[:, 0],
+        k3[:, 1],
+        k3[:, 2],
+        k4[:, 0],
+        k4[:, 1],
+        k4[:, 2],
+        packet1,
+        packet2,
+        lam1=0.5,
+        lam2=0.5,
+        lam3=0.5,
+        lam4=0.5,
+        impact_b=impact_b,
+        N1=N1,
+        N2=N2,
+    )
+    first_scalar = np.array(
+        [
+            S_impulse_first_order(
+                k3_i,
+                k4_i,
+                packet1,
+                packet2,
+                lam1=0.5,
+                lam2=0.5,
+                lam3=0.5,
+                lam4=0.5,
+                impact_b=impact_b,
+                N1=N1,
+                N2=N2,
+            )
+            for k3_i, k4_i in zip(k3, k4)
+        ]
+    )
+
+    exact_packet1 = LGPacket(
+        ell=1,
+        sigma_perp=HBARC_MEV_NM / 20.0,
+        sigma_par=HBARC_MEV_NM / 5.0,
+        kbar_z=10.0,
+    )
+    exact_packet2 = LGPacket(
+        ell=-1,
+        sigma_perp=HBARC_MEV_NM / 20.0,
+        sigma_par=HBARC_MEV_NM / 1.0,
+        kbar_z=-10.0,
+    )
+    exact_N1 = normalization_constant(exact_packet1)
+    exact_N2 = normalization_constant(exact_packet2)
+    exact_impact_b = real_array([0.2, -0.1], shape=(2,))
+    exact_quadrature = ExactTimeQuadrature(
+        n_theta=8,
+        n_kappa=5,
+        radial_variable="kappa",
+        kappa_method="boole",
+        kappa_n_sigma=10.0,
+    )
+    exact_k3 = real_array(
+        [
+            [0.001, 0.000, 10.00002],
+            [0.010, 0.002, 10.00000],
+            [0.030, -0.001, 9.99998],
+        ]
+    )
+    exact_k4 = real_array(
+        [
+            [-0.001, -0.000, -9.99990],
+            [-0.010, -0.002, -10.00004],
+            [-0.030, 0.001, -10.00000],
+        ]
+    )
+    exact_grid = S_exact_time_grid(
+        exact_k3[:, 0],
+        exact_k3[:, 1],
+        exact_k3[:, 2],
+        exact_k4[:, 0],
+        exact_k4[:, 1],
+        exact_k4[:, 2],
+        exact_packet1,
+        exact_packet2,
+        lam1=0.5,
+        lam2=0.5,
+        lam3=0.5,
+        lam4=0.5,
+        impact_b=exact_impact_b,
+        N1=exact_N1,
+        N2=exact_N2,
+        quadrature=exact_quadrature,
+        batch_size=2,
+    )
+    exact_scalar = np.array(
+        [
+            S_exact_time(
+                k3_i,
+                k4_i,
+                exact_packet1,
+                exact_packet2,
+                lam1=0.5,
+                lam2=0.5,
+                lam3=0.5,
+                lam4=0.5,
+                impact_b=exact_impact_b,
+                N1=exact_N1,
+                N2=exact_N2,
+                quadrature=exact_quadrature,
+                return_details=True,
+            )[0]
+            for k3_i, k4_i in zip(exact_k3, exact_k4)
+        ]
+    )
+
+    probability_quadrature = ProbabilityQuadrature(
+        k3_perp_range=(0.010, 0.030),
+        k3z_range=(
+            10.0 - 2.0 * exact_packet1.sigma_par,
+            10.0 + 2.0 * exact_packet1.sigma_par,
+        ),
+        k4z_range=(
+            -10.0 - 2.0 * exact_packet2.sigma_par,
+            -10.0 + 2.0 * exact_packet2.sigma_par,
+        ),
+        n_k3_perp=5,
+        n_phi=4,
+        n_k3z=5,
+        n_k4z=5,
+    )
+    probability_kwargs = dict(
+        packet1=exact_packet1,
+        packet2=exact_packet2,
+        quadrature=probability_quadrature,
+        impact_b=exact_impact_b,
+        N1=exact_N1,
+        N2=exact_N2,
+    )
+
+    errors = {
+        "S closed grid vs scalar": _max_relative_grid_error(
+            closed_grid,
+            closed_scalar,
+        ),
+        "S first-order grid vs scalar": _max_relative_grid_error(
+            first_grid,
+            first_scalar,
+        ),
+        "S exact-time grid vs scalar details": _max_relative_grid_error(
+            exact_grid,
+            exact_scalar,
+        ),
+    }
+
+    for s_matrix, s_kwargs in (
+        ("closed", None),
+        ("first_order", None),
+        (
+            "exact_time",
+            {"quadrature": exact_quadrature, "batch_size": 8},
+        ),
+    ):
+        fast = diff_probability(
+            [0.0, 0.0],
+            s_matrix=s_matrix,
+            s_matrix_kwargs=s_kwargs,
+            **probability_kwargs,
+        )
+        scalar = diff_probability(
+            [0.0, 0.0],
+            explicit_spin_sum=True,
+            s_matrix=s_matrix,
+            s_matrix_kwargs=s_kwargs,
+            **probability_kwargs,
+        )
+        errors[f"probability {s_matrix} fast vs scalar"] = relative_error(
+            fast,
+            scalar,
+        )
+
+    if verbose:
+        _print_errors("Vectorized-path errors", errors)
+
+    return errors
+
+
 def check_smatrix(
     n_phi: int = 16,
-    accuracy: NumericalAccuracy | None = None,
     verbose: bool = True,
 ) -> dict[str, float]:
     """Return error for closed impulse S matrix vs numerical transverse integration.
@@ -211,8 +475,6 @@ def check_smatrix(
     ----------
     n_phi:
         Number of angular nodes for numerical transverse quadrature.
-    accuracy:
-        Numerical accuracy for normalization and radial integrations.
     verbose:
         If True, print a compact error table.
 
@@ -221,13 +483,11 @@ def check_smatrix(
     dict[str, float]
         Relative error between closed and numerical-transverse S matrices.
     """
-    accuracy = resolve_accuracy(accuracy)
-
     packet1 = LGPacket(ell=1, sigma_perp=0.18, sigma_par=0.35, kbar_z=20.0)
     packet2 = LGPacket(ell=-1, sigma_perp=0.18, sigma_par=0.35, kbar_z=-20.0)
 
-    N1 = normalization_constant(packet1, accuracy=accuracy)
-    N2 = normalization_constant(packet2, accuracy=accuracy)
+    N1 = normalization_constant(packet1)
+    N2 = normalization_constant(packet2)
 
     impact_b = real_array([0.3, 0.0], shape=(2,))
     k3 = real_array([0.8, 0.10, 19.7], shape=(3,))
@@ -245,7 +505,6 @@ def check_smatrix(
         impact_b=impact_b,
         N1=N1,
         N2=N2,
-        accuracy=accuracy,
     )
 
     S_numeric = S_impulse_numeric_transverse_quad(
@@ -261,7 +520,6 @@ def check_smatrix(
         N1=N1,
         N2=N2,
         n_phi=n_phi,
-        accuracy=accuracy,
     )
 
     errors = {
@@ -276,7 +534,6 @@ def check_smatrix(
 
 def run_all_checks(
     n_phi: int = 16,
-    accuracy: NumericalAccuracy | None = None,
     verbose: bool = True,
 ) -> dict[str, dict[str, float]]:
     """Run all built-in numerical comparisons and return their errors.
@@ -285,8 +542,6 @@ def run_all_checks(
     ----------
     n_phi:
         Number of angular nodes used by transverse numerical checks.
-    accuracy:
-        Numerical accuracy shared by adaptive integrations.
     verbose:
         If True, print each check table.
 
@@ -295,11 +550,8 @@ def run_all_checks(
     dict[str, dict[str, float]]
         Nested mapping from check group to relative-error values.
     """
-    accuracy = resolve_accuracy(accuracy)
-
     results = {
         "normalization": check_normalization(
-            accuracy=accuracy,
             verbose=verbose,
         ),
         "laguerre_derivative": check_laguerre_derivative(
@@ -307,12 +559,13 @@ def run_all_checks(
         ),
         "transverse_integral": check_transverse_integral(
             n_phi=n_phi,
-            accuracy=accuracy,
+            verbose=verbose,
+        ),
+        "vectorized_paths": check_vectorized_paths(
             verbose=verbose,
         ),
         "smatrix": check_smatrix(
             n_phi=n_phi,
-            accuracy=accuracy,
             verbose=verbose,
         ),
     }

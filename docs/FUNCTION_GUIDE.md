@@ -91,51 +91,22 @@ $$
 
 ---
 
-## 2. Accuracy configuration
+## 2. Normalization quadrature settings
 
-### `NumericalAccuracy`
-
-```python
-accuracy = mv.NumericalAccuracy(
-    quad_epsabs=1.0e-10,
-    quad_epsrel=1.0e-10,
-    quad_limit=300,
-    root_residual_atol=1.0e-10,
-)
-```
-
-This object stores global numerical accuracy parameters.
-
-Fields:
+The old shared tolerance object has been removed. The standard normalization
+call uses the built-in adaptive `quad` settings:
 
 ```python
-quad_epsabs: float
-quad_epsrel: float
-quad_limit: int
-root_residual_atol: float
+N = mv.normalization_constant(packet)
 ```
 
-`quad_epsabs`, `quad_epsrel`, and `quad_limit` are used by one-dimensional adaptive integrations such as normalization integrals.
-
-`root_residual_atol` is reserved for routines involving root validation in delta-reduced expressions.
-
-The helper
-
-```python
-mv.resolve_accuracy(acc)
-```
-
-returns the explicit object if it is provided and otherwise falls back to `mv.ACCURACY`. Internally, functions use this helper rather than duplicating default-handling logic.
-
-`NumericalAccuracy.quad_kwargs()` returns the exact keyword dictionary passed to `scipy.integrate.quad`.
-
-The package default is
-
-```python
-mv.ACCURACY
-```
-
-Use a separate variable name such as `acc` if you want to avoid conflict with the module name `moller_vortex.accuracy`.
+S-matrix and probability functions are controlled by their own deterministic
+quadrature objects, not by a shared tolerance object. For scans, compute `N1`
+and `N2` once and pass them explicitly. If either normalization is omitted, the
+package recomputes it with the standard normalization settings. If one
+particular normalization check needs different adaptive tolerances, pass
+`quad_epsabs`, `quad_epsrel`, or `quad_limit` directly in that
+`normalization_constant(...)` call.
 
 ---
 
@@ -200,15 +171,15 @@ Returns the OAM phase and radial factor associated with a packet.
 
 ## 4. Normalization
 
-### `normalization_constant(packet, m=..., accuracy=...)`
+### `normalization_constant(packet, m=..., *, quad_epsabs=..., quad_epsrel=..., quad_limit=...)`
 
 Computes the relativistic normalization constant $$N_\ell$$ for an on-axis packet.
 
 Typical use:
 
 ```python
-N1 = mv.normalization_constant(packet1, accuracy=acc)
-N2 = mv.normalization_constant(packet2, accuracy=acc)
+N1 = mv.normalization_constant(packet1)
+N2 = mv.normalization_constant(packet2)
 ```
 
 For scans, compute `N1`, `N2` once and pass them explicitly to avoid recomputing normalization many times.
@@ -507,7 +478,7 @@ S = mv.S_impulse_closed_form(
     impact_b=impact_b,
     N1=N1,
     N2=N2,
-    accuracy=acc,
+    progress=True,
 )
 ```
 
@@ -518,7 +489,6 @@ Inputs:
 - `lam1`, `lam2`, `lam3`, `lam4`: helicities.
 - `impact_b`: 2-vector in MeV$$^{-1}$$.
 - `N1`, `N2`: normalization constants. If omitted, they may be recomputed.
-- `accuracy`: numerical accuracy object.
 
 ### `S_impulse_numeric_transverse_quad(...)`
 
@@ -549,11 +519,11 @@ For the direct kappa formula use `n_kappa` and `kappa_method`:
 ```python
 exact_quad = mv.ExactTimeQuadrature(
     radial_variable="kappa",
-    n_kappa=65,
+    n_kappa=257,
     n_theta=128,
     kappa_method="boole",
     theta_method="trapezoid",
-    kappa_n_sigma=12.0,
+    kappa_n_sigma=10.0,
 )
 ```
 
@@ -577,13 +547,25 @@ chi formula no interval is needed:
 (theta_nodes, theta_weights) = mv.exact_time_nodes(exact_quad)
 ```
 
-For the direct kappa formula, `S_exact_time(...)` computes the physical radial
-interval and passes it into `exact_time_nodes(...)`.
+For the direct kappa formula, the scalar diagnostic path computes the physical
+radial interval and passes it into `exact_time_nodes(...)`. The vectorized batch
+path uses the same node convention but maps each point's physical kappa interval
+from unit nodes internally, because the useful interval can differ from one
+external phase-space point to another.
 
-This corresponds to the regularized disk integral
+The direct kappa formula corresponds to
 
 $$
-\int_0^{2\pi} d\theta \int_0^{\pi/2} d\chi\,\sin\chi.
+\int_0^{2\pi}d\theta
+\int d\kappa\,
+\frac{\kappa}{\sqrt{1-\mathrm{disk\_curvature}\,\kappa^2}}.
+$$
+
+The chi formula corresponds to
+
+$$
+\int_0^{2\pi}d\theta
+\int_0^{\pi/2}d\chi\,\sin\chi.
 $$
 
 ---
@@ -696,13 +678,13 @@ Example for parameters close to the cited plots:
 ```python
 quadrature = mv.ProbabilityQuadrature(
     k3_perp_range=(0.010, 0.050),
-    k3z_range=(10.0 - 8.0 * sigma1_par, 10.0 + 8.0 * sigma1_par),
-    k4z_range=(-10.0 - 8.0 * sigma2_par, -10.0 + 8.0 * sigma2_par),
+    k3z_range=(10.0 - 50.0 * sigma1_par, 10.0 + 50.0 * sigma1_par),
+    k4z_range=(-10.0 - 50.0 * sigma2_par, -10.0 + 50.0 * sigma2_par),
     K_perp_range=(0.0, 3.0e-4),
-    n_k3_perp=9,
-    n_phi=24,
-    n_k3z=9,
-    n_k4z=9,
+    n_k3_perp=25,
+    n_phi=10,
+    n_k3z=25,
+    n_k4z=25,
     n_K_perp=9,
     n_K_phi=24,
 )
@@ -816,7 +798,6 @@ w = mv.diff_probability(
     impact_b=impact_b,
     N1=N1,
     N2=N2,
-    accuracy=acc,
 )
 ```
 
@@ -845,7 +826,7 @@ W = mv.diff_probability_grid(
     impact_b=impact_b,
     N1=N1,
     N2=N2,
-    accuracy=acc,
+    progress=True,
 )
 ```
 
@@ -858,6 +839,8 @@ K_y=Ky\_values[iy].
 $$
 
 For plotting axes in eV, multiply the `extent` by $$10^6$$.
+With `progress=True`, the function prints completed grid points, total grid
+points, percent and elapsed time after each completed `Ky` row.
 
 ### `longitudinal_density(...)`
 
@@ -891,7 +874,6 @@ z_value = mv.longitudinal_density(
     impact_b=impact_b,
     N1=N1,
     N2=N2,
-    accuracy=acc,
     s_matrix="first_order",
     s_matrix_kwargs={"time_mode": "resummed"},
 )
@@ -916,7 +898,6 @@ Z = mv.longitudinal_density_grid(
     impact_b=impact_b,
     N1=N1,
     N2=N2,
-    accuracy=acc,
     s_matrix="closed",
     progress=True,
 )
@@ -954,11 +935,13 @@ P = mv.total_probability(
     impact_b=impact_b,
     N1=N1,
     N2=N2,
-    accuracy=acc,
+    progress=True,
 )
 ```
 
 Return dimension: dimensionless.
+With `progress=True`, the function prints completed outer $$K_\perp$$ points,
+total points, percent and elapsed time during the outer integration.
 
 ### `Ky_average(...)`
 
@@ -984,7 +967,7 @@ Ky_mean = mv.Ky_average(
     impact_b=impact_b,
     N1=N1,
     N2=N2,
-    accuracy=acc,
+    progress=True,
 )
 
 print(Ky_mean, "MeV")
@@ -1031,25 +1014,18 @@ packet2 = mv.LGPacket(
 
 impact_b = np.array([5.0 * NM_TO_MEV_INV, 0.0], dtype=float)
 
-acc = mv.NumericalAccuracy(
-    quad_epsabs=1.0e-10,
-    quad_epsrel=1.0e-10,
-    quad_limit=300,
-    root_residual_atol=1.0e-10,
-)
-
-N1 = mv.normalization_constant(packet1, accuracy=acc)
-N2 = mv.normalization_constant(packet2, accuracy=acc)
+N1 = mv.normalization_constant(packet1)
+N2 = mv.normalization_constant(packet2)
 
 quadrature = mv.ProbabilityQuadrature(
     k3_perp_range=(0.010, 0.050),
-    k3z_range=(10.0 - 8.0 * sigma1_par, 10.0 + 8.0 * sigma1_par),
-    k4z_range=(-10.0 - 8.0 * sigma2_par, -10.0 + 8.0 * sigma2_par),
+    k3z_range=(10.0 - 50.0 * sigma1_par, 10.0 + 50.0 * sigma1_par),
+    k4z_range=(-10.0 - 50.0 * sigma2_par, -10.0 + 50.0 * sigma2_par),
     K_perp_range=(0.0, 3.0e-4),
-    n_k3_perp=9,
-    n_phi=24,
-    n_k3z=9,
-    n_k4z=9,
+    n_k3_perp=25,
+    n_phi=10,
+    n_k3z=25,
+    n_k4z=25,
     n_K_perp=9,
     n_K_phi=24,
 )
@@ -1070,7 +1046,6 @@ W = mv.diff_probability_grid(
     impact_b=impact_b,
     N1=N1,
     N2=N2,
-    accuracy=acc,
 )
 ```
 
@@ -1129,7 +1104,6 @@ Ky_values = np.array([
         impact_b=np.array([b_nm * NM_TO_MEV_INV, 0.0], dtype=float),
         N1=N1,
         N2=N2,
-        accuracy=acc,
     )
     for b_nm in b_x_nm
 ])
@@ -1223,6 +1197,8 @@ n_k3z
 n_k4z
 n_K_perp
 n_K_phi
+n_theta
+n_kappa
 ```
 
 A sensible workflow is:
@@ -1231,6 +1207,10 @@ A sensible workflow is:
 2. Increase the internal quadrature for `diff_probability`.
 3. Increase the outer $$K$$-quadrature for `total_probability` and `Ky_average`.
 4. Check convergence at representative points before running expensive full scans.
+
+For `s_matrix="exact_time"`, pass `s_matrix_kwargs={"batch_size": ...}` when
+memory or runtime needs tuning. Larger batches reduce Python overhead but build
+larger temporary arrays of shape roughly `(batch_size, n_kappa, n_theta)`.
 
 ---
 
