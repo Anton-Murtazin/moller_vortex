@@ -189,8 +189,8 @@ class ExactTimeQuadrature:
     """
 
     n_chi: int = 65
-    n_theta: int = 128
-    n_kappa: int | None = 257
+    n_theta: int = 32
+    n_kappa: int | None = 65 # 129 is better
     chi_method: str = "boole"
     theta_method: str = "trapezoid"
     radial_variable: str = "kappa"
@@ -236,10 +236,10 @@ class ProbabilityQuadrature:
         -10.0 + 50.0 * _DEFAULT_SIGMA2_PAR,
     )
     K_perp_range: tuple[float, float] | None = None
-    n_k3_perp: int | None = 25
-    n_phi: int | None = 10
-    n_k3z: int | None = 25
-    n_k4z: int | None = 25
+    n_k3_perp: int | None = 17
+    n_phi: int | None = 5
+    n_k3z: int | None = 17
+    n_k4z: int | None = 17
     n_K_perp: int | None = None
     n_K_phi: int | None = None
     k3_perp_method: str = "boole"
