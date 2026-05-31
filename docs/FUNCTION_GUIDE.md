@@ -827,6 +827,7 @@ W = mv.diff_probability_grid(
     N1=N1,
     N2=N2,
     progress=True,
+    workers=4,
 )
 ```
 
@@ -839,8 +840,13 @@ K_y=Ky\_values[iy].
 $$
 
 For plotting axes in eV, multiply the `extent` by $$10^6$$.
-With `progress=True`, the function prints completed grid points, total grid
-points, percent and elapsed time after each completed `Ky` row.
+With `progress=True`, the function updates completed grid points, total grid
+points, percent, elapsed time and ETA after each completed grid point. The
+output is updated in place, so the first message appears after the first point,
+not after the first completed row.
+With `workers > 1`, independent grid points are evaluated in parallel and the
+result array is filled in the same index convention. This is especially useful
+for `s_matrix="exact_time"` scans.
 
 ### `longitudinal_density(...)`
 
@@ -900,8 +906,14 @@ Z = mv.longitudinal_density_grid(
     N2=N2,
     s_matrix="closed",
     progress=True,
+    workers=4,
 )
 ```
+
+`workers` has the same meaning as in `diff_probability_grid(...)`: it
+parallelizes independent map points and leaves the default sequential behavior
+unchanged when omitted.
+With `progress=True`, the map progress is also point-by-point.
 
 ### `total_probability(...)`
 
@@ -936,12 +948,15 @@ P = mv.total_probability(
     N1=N1,
     N2=N2,
     progress=True,
+    workers=4,
 )
 ```
 
 Return dimension: dimensionless.
-With `progress=True`, the function prints completed outer $$K_\perp$$ points,
-total points, percent and elapsed time during the outer integration.
+With `progress=True`, the function updates completed outer $$K_\perp$$ points,
+total points, percent, elapsed time and ETA after each completed outer point.
+With `workers > 1`, independent outer $$K_\perp$$ points are evaluated in
+parallel and then summed in a fixed order.
 
 ### `Ky_average(...)`
 
@@ -968,6 +983,7 @@ Ky_mean = mv.Ky_average(
     N1=N1,
     N2=N2,
     progress=True,
+    workers=4,
 )
 
 print(Ky_mean, "MeV")
@@ -975,6 +991,8 @@ print(Ky_mean * 1.0e6, "eV")
 ```
 
 Return dimension: MeV.
+With `progress=True`, `Ky_average(...)` uses the same point-by-point progress
+line as `total_probability(...)`.
 
 ---
 
@@ -1211,6 +1229,10 @@ A sensible workflow is:
 For `s_matrix="exact_time"`, pass `s_matrix_kwargs={"batch_size": ...}` when
 memory or runtime needs tuning. Larger batches reduce Python overhead but build
 larger temporary arrays of shape roughly `(batch_size, n_kappa, n_theta)`.
+For grid scans, `longitudinal_density_grid(...)`, `diff_probability_grid(...)`,
+`total_probability(...)`, and `Ky_average(...)` also accept `workers=N`.
+`workers` parallelizes independent outer points, while `batch_size` controls
+how many exact-time momentum points each worker evaluates internally.
 
 ---
 

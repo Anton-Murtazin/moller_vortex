@@ -10,6 +10,7 @@ endpoint-free trapezoidal rule by default.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from typing import Callable, Iterable
 
@@ -49,16 +50,36 @@ def _print_progress(
     elapsed: float,
     point_text: str | None = None,
 ) -> None:
-    """Print one compact progress line for deterministic grid scans."""
+    """Update one compact in-place progress line for deterministic scans."""
     percent = 100.0 * completed / total if total else 100.0
+    bar_width = 24
+    filled = int(bar_width * completed / total) if total else bar_width
+    filled = max(0, min(bar_width, filled))
+    bar = "#" * filled + "-" * (bar_width - filled)
+    rate = completed / elapsed if elapsed > 0.0 else 0.0
+    eta = (total - completed) / rate if rate > 0.0 else None
     parts = [
-        f"{label}: point {completed:6d} / {total:6d}",
+        f"{label}: [{bar}] {completed:6d} / {total:6d}",
         f"{percent:6.2f}%",
         f"elapsed = {elapsed:.2f} s",
     ]
+    if eta is not None:
+        parts.append(f"eta = {eta:.2f} s")
     if point_text is not None:
         parts.append(point_text)
-    print(" | ".join(parts), flush=True)
+
+    end = "\n" if completed >= total else ""
+    print("\r" + " | ".join(parts) + " " * 20, end=end, flush=True)
+
+
+def _resolve_workers(workers: int | None) -> int:
+    """Return a validated worker count for outer grid scans."""
+    if workers is None:
+        return 1
+    workers = int(workers)
+    if workers < 1:
+        raise ValueError("workers must be a positive integer or None.")
+    return workers
 
 
 def _resolve_s_matrix(s_matrix: str | Callable):
@@ -878,6 +899,7 @@ def longitudinal_density_grid(
     s_matrix: str | Callable = "closed",
     s_matrix_kwargs: dict | None = None,
     progress: bool = False,
+    workers: int | None = None,
 ) -> np.ndarray:
     """Compute ``longitudinal_density`` on a ``k3z``/``k4z`` grid.
 
@@ -895,8 +917,12 @@ def longitudinal_density_grid(
     explicit_spin_sum, s_matrix, s_matrix_kwargs:
         Same meaning as in ``longitudinal_density``.
     progress:
-        If True, print completed point count, total point count and percent
-        after each completed ``k4z`` row.
+        If True, update completed point count, total point count, percent,
+        elapsed time and ETA after each completed grid point.
+    workers:
+        Number of CPU worker threads for independent grid points.  The default
+        ``None`` is equivalent to ``1`` and preserves deterministic sequential
+        evaluation.
 
     Returns
     -------
@@ -923,6 +949,40 @@ def longitudinal_density_grid(
     values = real_empty((len(k4z_values), len(k3z_values)))
     start_total = time.perf_counter()
     total_points = len(k4z_values) * len(k3z_values)
+    workers = _resolve_workers(workers)
+
+    if workers > 1:
+        def evaluate_point(i4, i3, k4z, k3z):
+            value = _longitudinal_density_resolved(
+                k3z,
+                k4z,
+                K_perp,
+                quadrature,
+                **inputs,
+            )
+            return i4, i3, value
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [
+                executor.submit(evaluate_point, i4, i3, k4z, k3z)
+                for i4, k4z in enumerate(k4z_values)
+                for i3, k3z in enumerate(k3z_values)
+            ]
+            for completed, future in enumerate(as_completed(futures), start=1):
+                i4, i3, value = future.result()
+                values[i4, i3] = value
+
+                if progress:
+                    elapsed_total = time.perf_counter() - start_total
+                    _print_progress(
+                        label="longitudinal_density_grid",
+                        completed=completed,
+                        total=total_points,
+                        elapsed=elapsed_total,
+                        point_text=f"workers = {workers}",
+                    )
+
+        return values
 
     for i4, k4z in enumerate(k4z_values):
         for i3, k3z in enumerate(k3z_values):
@@ -934,16 +994,20 @@ def longitudinal_density_grid(
                 **inputs,
             )
 
-        if progress:
-            completed = (i4 + 1) * len(k3z_values)
-            elapsed_total = time.perf_counter() - start_total
-            _print_progress(
-                label="longitudinal_density_grid",
-                completed=completed,
-                total=total_points,
-                elapsed=elapsed_total,
-                point_text=f"row {i4 + 1} / {len(k4z_values)} | k4z = {k4z:.12e} MeV",
-            )
+            if progress:
+                completed = i4 * len(k3z_values) + i3 + 1
+                elapsed_total = time.perf_counter() - start_total
+                _print_progress(
+                    label="longitudinal_density_grid",
+                    completed=completed,
+                    total=total_points,
+                    elapsed=elapsed_total,
+                    point_text=(
+                        f"row {i4 + 1} / {len(k4z_values)}"
+                        f" | col {i3 + 1} / {len(k3z_values)}"
+                        f" | k4z = {k4z:.12e} MeV"
+                    ),
+                )
 
     return values
 
@@ -965,6 +1029,7 @@ def diff_probability_grid(
     s_matrix: str | Callable = "closed",
     s_matrix_kwargs: dict | None = None,
     progress: bool = False,
+    workers: int | None = None,
 ) -> np.ndarray:
     """Compute ``diff_probability`` on a rectangular ``Kx``/``Ky`` grid.
 
@@ -980,8 +1045,12 @@ def diff_probability_grid(
     explicit_spin_sum, s_matrix, s_matrix_kwargs:
         Same meaning as in ``diff_probability``.
     progress:
-        If True, print completed point count, total point count and percent
-        after each completed ``Ky`` row.
+        If True, update completed point count, total point count, percent,
+        elapsed time and ETA after each completed grid point.
+    workers:
+        Number of CPU worker threads for independent grid points.  The default
+        ``None`` is equivalent to ``1`` and preserves deterministic sequential
+        evaluation.
 
     Returns
     -------
@@ -1007,22 +1076,55 @@ def diff_probability_grid(
     values = real_empty((len(Ky_values), len(Kx_values)))
     start_total = time.perf_counter()
     total_points = len(Ky_values) * len(Kx_values)
+    workers = _resolve_workers(workers)
+
+    if workers > 1:
+        def evaluate_point(iy, ix, Ky, Kx):
+            K_perp = real_array([Kx, Ky], shape=(2,))
+            value = _diff_probability_resolved(K_perp, quadrature, **inputs)
+            return iy, ix, value
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [
+                executor.submit(evaluate_point, iy, ix, Ky, Kx)
+                for iy, Ky in enumerate(Ky_values)
+                for ix, Kx in enumerate(Kx_values)
+            ]
+            for completed, future in enumerate(as_completed(futures), start=1):
+                iy, ix, value = future.result()
+                values[iy, ix] = value
+
+                if progress:
+                    elapsed_total = time.perf_counter() - start_total
+                    _print_progress(
+                        label="diff_probability_grid",
+                        completed=completed,
+                        total=total_points,
+                        elapsed=elapsed_total,
+                        point_text=f"workers = {workers}",
+                    )
+
+        return values
 
     for iy, Ky in enumerate(Ky_values):
         for ix, Kx in enumerate(Kx_values):
             K_perp = real_array([Kx, Ky], shape=(2,))
             values[iy, ix] = _diff_probability_resolved(K_perp, quadrature, **inputs)
 
-        if progress:
-            completed = (iy + 1) * len(Kx_values)
-            elapsed_total = time.perf_counter() - start_total
-            _print_progress(
-                label="diff_probability_grid",
-                completed=completed,
-                total=total_points,
-                elapsed=elapsed_total,
-                point_text=f"row {iy + 1} / {len(Ky_values)} | Ky = {Ky:.12e} MeV",
-            )
+            if progress:
+                completed = iy * len(Kx_values) + ix + 1
+                elapsed_total = time.perf_counter() - start_total
+                _print_progress(
+                    label="diff_probability_grid",
+                    completed=completed,
+                    total=total_points,
+                    elapsed=elapsed_total,
+                    point_text=(
+                        f"row {iy + 1} / {len(Ky_values)}"
+                        f" | col {ix + 1} / {len(Kx_values)}"
+                        f" | Ky = {Ky:.12e} MeV"
+                    ),
+                )
 
     return values
 
@@ -1032,6 +1134,7 @@ def _outer_K_moments(
     inputs: dict,
     *,
     progress: bool = False,
+    workers: int | None = None,
 ) -> tuple[np.float64, np.float64]:
     """Return total probability and the ``K_y`` numerator.
 
@@ -1042,8 +1145,10 @@ def _outer_K_moments(
     inputs:
         Validated values from ``_prepare_probability_inputs``.
     progress:
-        If True, print completed outer ``K_perp`` point count, total point
-        count and percent after each completed radial ``K`` row.
+        If True, update completed outer ``K_perp`` point count, total point
+        count, percent, elapsed time and ETA after each completed point.
+    workers:
+        Number of CPU worker threads for independent outer ``K_perp`` points.
 
     Returns
     -------
@@ -1056,9 +1161,58 @@ def _outer_K_moments(
     ky_numerator = FLOAT_DTYPE(0.0)
     start_total = time.perf_counter()
     total_points = len(K_nodes) * len(phi_nodes)
+    workers = _resolve_workers(workers)
+
+    if workers > 1:
+        probability_parts = real_empty(total_points)
+        ky_parts = real_empty(total_points)
+
+        def evaluate_point(index, K, w_K, phi_K, w_phi_K):
+            Kx = K * np.cos(phi_K)
+            Ky = K * np.sin(phi_K)
+            K_perp = real_array([Kx, Ky], shape=(2,))
+            w_value = _diff_probability_resolved(K_perp, quadrature, **inputs)
+            weight = w_K * w_phi_K * K
+            return index, weight * w_value, weight * Ky * w_value
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = []
+            index = 0
+            for K, w_K in zip(K_nodes, K_weights):
+                for phi_K, w_phi_K in zip(phi_nodes, phi_weights):
+                    futures.append(
+                        executor.submit(
+                            evaluate_point,
+                            index,
+                            K,
+                            w_K,
+                            phi_K,
+                            w_phi_K,
+                        )
+                    )
+                    index += 1
+
+            for completed, future in enumerate(as_completed(futures), start=1):
+                index, probability_part, ky_part = future.result()
+                probability_parts[index] = probability_part
+                ky_parts[index] = ky_part
+
+                if progress:
+                    elapsed_total = time.perf_counter() - start_total
+                    _print_progress(
+                        label="outer_K_moments",
+                        completed=completed,
+                        total=total_points,
+                        elapsed=elapsed_total,
+                        point_text=f"workers = {workers}",
+                    )
+
+        probability = np.sum(probability_parts, dtype=FLOAT_DTYPE)
+        ky_numerator = np.sum(ky_parts, dtype=FLOAT_DTYPE)
+        return probability, ky_numerator
 
     for iK, (K, w_K) in enumerate(zip(K_nodes, K_weights)):
-        for phi_K, w_phi_K in zip(phi_nodes, phi_weights):
+        for i_phi, (phi_K, w_phi_K) in enumerate(zip(phi_nodes, phi_weights)):
             Kx = K * np.cos(phi_K)
             Ky = K * np.sin(phi_K)
             K_perp = real_array([Kx, Ky], shape=(2,))
@@ -1069,16 +1223,20 @@ def _outer_K_moments(
             probability = probability + weight * w_value
             ky_numerator = ky_numerator + weight * Ky * w_value
 
-        if progress:
-            completed = (iK + 1) * len(phi_nodes)
-            elapsed_total = time.perf_counter() - start_total
-            _print_progress(
-                label="outer_K_moments",
-                completed=completed,
-                total=total_points,
-                elapsed=elapsed_total,
-                point_text=f"K row {iK + 1} / {len(K_nodes)} | K = {K:.12e} MeV",
-            )
+            if progress:
+                completed = iK * len(phi_nodes) + i_phi + 1
+                elapsed_total = time.perf_counter() - start_total
+                _print_progress(
+                    label="outer_K_moments",
+                    completed=completed,
+                    total=total_points,
+                    elapsed=elapsed_total,
+                    point_text=(
+                        f"K row {iK + 1} / {len(K_nodes)}"
+                        f" | phi {i_phi + 1} / {len(phi_nodes)}"
+                        f" | K = {K:.12e} MeV"
+                    ),
+                )
 
     return probability, ky_numerator
 
@@ -1098,6 +1256,7 @@ def total_probability(
     s_matrix: str | Callable = "closed",
     s_matrix_kwargs: dict | None = None,
     progress: bool = False,
+    workers: int | None = None,
 ) -> np.float64:
     """Compute the total probability in the selected ``K_perp`` domain.
 
@@ -1111,8 +1270,10 @@ def total_probability(
     explicit_spin_sum, s_matrix, s_matrix_kwargs:
         Same meaning as in ``diff_probability``.
     progress:
-        If True, print completed outer ``K_perp`` point count, total point
-        count and percent during the outer integration.
+        If True, update completed outer ``K_perp`` point count, total point
+        count, percent, elapsed time and ETA after each completed point.
+    workers:
+        Number of CPU worker threads for independent outer ``K_perp`` points.
 
     Returns
     -------
@@ -1132,7 +1293,12 @@ def total_probability(
         s_matrix=s_matrix,
         s_matrix_kwargs=s_matrix_kwargs,
     )
-    probability, _ = _outer_K_moments(quadrature, inputs, progress=progress)
+    probability, _ = _outer_K_moments(
+        quadrature,
+        inputs,
+        progress=progress,
+        workers=workers,
+    )
     return probability
 
 
@@ -1151,6 +1317,7 @@ def Ky_average(
     s_matrix: str | Callable = "closed",
     s_matrix_kwargs: dict | None = None,
     progress: bool = False,
+    workers: int | None = None,
 ) -> np.float64:
     """Compute ``<K_y>`` in the selected transverse ``K_perp`` domain.
 
@@ -1164,8 +1331,10 @@ def Ky_average(
     explicit_spin_sum, s_matrix, s_matrix_kwargs:
         Same meaning as in ``diff_probability``.
     progress:
-        If True, print completed outer ``K_perp`` point count, total point
-        count and percent during the outer integration.
+        If True, update completed outer ``K_perp`` point count, total point
+        count, percent, elapsed time and ETA after each completed point.
+    workers:
+        Number of CPU worker threads for independent outer ``K_perp`` points.
 
     Returns
     -------
@@ -1185,5 +1354,10 @@ def Ky_average(
         s_matrix=s_matrix,
         s_matrix_kwargs=s_matrix_kwargs,
     )
-    probability, numerator = _outer_K_moments(quadrature, inputs, progress=progress)
+    probability, numerator = _outer_K_moments(
+        quadrature,
+        inputs,
+        progress=progress,
+        workers=workers,
+    )
     return numerator / probability

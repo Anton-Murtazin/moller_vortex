@@ -118,8 +118,14 @@ per-point kappa intervals from unit nodes internally. The chi formula uses
 
 For probability integrals the finite-axis defaults are composite Boole, so use node counts of the form `n = 4*m + 1`, for example `9`, `17`, or `25`. Periodic angular axes use endpoint-free trapezoid quadrature by default.
 
-Long grid-style probability routines accept `progress=True` to print completed
-points, total points, percent and elapsed time while the calculation runs.
+Long grid-style probability routines accept `progress=True` to update an
+in-place point-by-point progress line with completed points, total points,
+percent, elapsed time and ETA. For expensive maps and outer probability
+integrals, pass `workers=N` to evaluate independent outer grid points in
+parallel. This is most useful for `s_matrix="exact_time"`; start with
+`workers=2` or `workers=4` and tune together with
+`s_matrix_kwargs={"batch_size": ...}` because both settings increase the amount
+of work kept in memory at once.
 
 ## Built-in numerical checks
 

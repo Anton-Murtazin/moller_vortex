@@ -1144,6 +1144,17 @@ def _cached_exact_time_chi(n_chi: int, chi_method: str):
     return chi_nodes, chi_weights, np.sin(chi_nodes), np.cos(chi_nodes)
 
 
+@lru_cache(maxsize=64)
+def _cached_exact_time_unit_kappa(n_kappa: int, kappa_method: str):
+    """Return cached unit-interval kappa nodes and weights."""
+    return nodes_and_weights(
+        (0.0, 1.0),
+        n_kappa,
+        method=kappa_method,
+        endpoint=False,
+    )
+
+
 def _exact_time_A_perp_grid(
     qx,
     qy,
@@ -1423,12 +1434,7 @@ def S_exact_time_grid(
     if kappa_method is None:
         kappa_method = quadrature.chi_method
 
-    unit_nodes, unit_weights = nodes_and_weights(
-        (0.0, 1.0),
-        n_kappa,
-        method=kappa_method,
-        endpoint=False,
-    )
+    unit_nodes, unit_weights = _cached_exact_time_unit_kappa(n_kappa, kappa_method)
     unit_nodes = unit_nodes[None, :, None]
     unit_weights = unit_weights[None, :, None]
 
