@@ -1,17 +1,12 @@
-"""Closed and direct numerical transverse integrals."""
+"""Closed transverse integrals."""
 
 from __future__ import annotations
 
 import math
 
 import numpy as np
-from .constants import PI, complex_array, real_array
+from .constants import PI, complex_array
 from .kinematics import vec2
-
-
-_TRANSVERSE_QUAD_EPSABS = 1.0e-10
-_TRANSVERSE_QUAD_EPSREL = 1.0e-10
-_TRANSVERSE_QUAD_LIMIT = 30
 
 
 def laguerre_derivative(a: int, b: int, c1: complex, c2: complex, c12: complex) -> complex:
@@ -439,139 +434,3 @@ def transverse_integral_explicit_grid(
         - laguerre_derivative(n, m + 1, c1, c2, mu)
     )
     return prefactor * bracket
-
-
-def vortex_factor(z: complex, ell: int) -> complex:
-    """Return the Cartesian vortex monomial.
-
-    Parameters
-    ----------
-    z:
-        Complex transverse coordinate ``kx + i ky``.
-    ell:
-        OAM integer.
-
-    Returns
-    -------
-    complex
-        ``z**ell`` for positive OAM, ``conjugate(z)**abs(ell)`` for negative
-        OAM, and ``1`` for zero OAM.
-    """
-    if ell > 0:
-        return z ** ell
-    if ell < 0:
-        return np.conjugate(z) ** abs(ell)
-    return 1.0 + 0.0j
-
-
-def transverse_integral_numeric_quad(
-    ell1: int,
-    ell2: int,
-    k3_perp,
-    K_perp,
-    b_perp,
-    alpha: complex,
-    beta: complex,
-    gamma: complex,
-    n_phi: int = 64,
-) -> complex:
-    """Numerically integrate the first-order transverse integral.
-
-    Parameters
-    ----------
-    ell1, ell2:
-        Incoming packet OAM integers.
-    k3_perp, K_perp, b_perp:
-        Transverse vectors used in the analytic integral.
-    alpha, beta, gamma:
-        Transverse Gaussian coefficients.
-    n_phi:
-        Number of azimuthal trapezoid nodes.
-
-    Returns
-    -------
-    complex
-        Direct polar quadrature value for comparison with
-        ``transverse_integral_explicit``.
-    """
-    from scipy.integrate import quad
-
-    k3p = vec2(k3_perp)
-    Kp = vec2(K_perp)
-    bp = vec2(b_perp)
-
-    k3_abs = np.linalg.norm(k3p)
-    if k3_abs == 0.0:
-        raise ZeroDivisionError("The expanded transverse denominator requires k3_perp != 0.")
-
-    phi3 = np.arctan2(k3p[1], k3p[0])
-    exp_minus_i_phi3 = np.exp(-1j * phi3)
-    exp_plus_i_phi3 = np.exp(1j * phi3)
-
-    phis = np.linspace(0.0, 2.0 * PI, n_phi, endpoint=False)
-    dphi = 2.0 * PI / n_phi
-
-    total = 0.0 + 0.0j
-
-    for phi in phis:
-        cos_phi = np.cos(phi)
-        sin_phi = np.sin(phi)
-
-        def radial_integrand(r: float) -> complex:
-            """Return the radial integrand for one fixed polar angle.
-
-            Parameters
-            ----------
-            r:
-                Transverse radial momentum.
-
-            Returns
-            -------
-            complex
-                Integrand value including the polar measure factor.
-            """
-            k = real_array([r * cos_phi, r * sin_phi], shape=(2,))
-            K_minus_k = Kp - k
-
-            z1 = k[0] + 1j * k[1]
-            z2 = K_minus_k[0] + 1j * K_minus_k[1]
-
-            vortex1 = vortex_factor(z1, ell1)
-            vortex2 = vortex_factor(z2, ell2)
-
-            exponent = (
-                -alpha * np.dot(k, k) / 2.0
-                + beta * np.dot(k, Kp)
-                - gamma * np.dot(K_minus_k, K_minus_k) / 2.0
-                - 1j * np.dot(bp, k)
-            )
-
-            denominator_expansion = (
-                1.0
-                + exp_minus_i_phi3 * z1 / k3_abs
-                + exp_plus_i_phi3 * np.conjugate(z1) / k3_abs
-            ) / k3_abs ** 2
-
-            return r * vortex1 * vortex2 * np.exp(exponent) * denominator_expansion
-
-        real_part = quad(
-            lambda r: np.real(radial_integrand(r)),
-            0.0,
-            np.inf,
-            epsabs=_TRANSVERSE_QUAD_EPSABS,
-            epsrel=_TRANSVERSE_QUAD_EPSREL,
-            limit=_TRANSVERSE_QUAD_LIMIT,
-        )[0]
-
-        imag_part = quad(
-            lambda r: np.imag(radial_integrand(r)),
-            0.0,
-            np.inf,
-            epsabs=_TRANSVERSE_QUAD_EPSABS,
-            epsrel=_TRANSVERSE_QUAD_EPSREL,
-            limit=_TRANSVERSE_QUAD_LIMIT,
-        )[0]
-
-        total += dphi * (real_part + 1j * imag_part)
-
-    return total

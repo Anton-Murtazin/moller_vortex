@@ -22,7 +22,6 @@ from .packets import LGPacket, central_energy, resolve_normalizations
 from .transverse import (
     transverse_integral_explicit,
     transverse_integral_explicit_grid,
-    transverse_integral_numeric_quad,
 )
 from .quadrature import ExactTimeQuadrature, exact_time_nodes, nodes_and_weights
 
@@ -740,18 +739,15 @@ def _five_point_time_derivatives(values: tuple[complex, complex, complex, comple
 
 
 def _first_order_time_block(
-    mode: str,
     longitudinal: FirstOrderLongitudinal,
     I0: complex,
     I1: complex,
     I2: complex,
 ) -> tuple[complex, dict]:
-    """Assemble the expanded or resummed first-order time block.
+    """Assemble the resummed first-order time block.
 
     Parameters
     ----------
-    mode:
-        ``"expanded"`` or ``"resummed"``.
     longitudinal:
         Longitudinal first-order parameters.
     I0, I1, I2:
@@ -762,45 +758,12 @@ def _first_order_time_block(
     tuple[complex, dict]
         Time block and intermediate diagnostic values.
     """
-    mode = _mode(mode, ("resummed", "expanded"), "time_mode")
-
     Omega = longitudinal.Omega
     a_long = longitudinal.a
     b_long = longitudinal.b
     c_long = longitudinal.c
     d_long = longitudinal.d
     c2 = c_long * c_long
-
-    if mode == "expanded":
-        time_block = (
-            2.0
-            * np.sqrt(np.pi)
-            / c_long
-            * (
-                I0
-                + (
-                    2.0 * Omega * a_long / c2
-                    - Omega * Omega * b_long / c2
-                    - Omega * d_long / c_long
-                )
-                * I0
-                + 1j
-                * (
-                    2.0 * Omega * b_long / c2
-                    - 2.0 * a_long / c2
-                    + d_long / c_long
-                )
-                * I1
-                + b_long * I2 / c2
-            )
-        )
-
-        return time_block, dict(
-            longitudinal_exponent=None,
-            longitudinal_factor=None,
-            q_time=None,
-            transverse_time_bracket=None,
-        )
 
     longitudinal_exponent = (
         -b_long * Omega * Omega / c2
@@ -854,7 +817,6 @@ def S_impulse_first_order(
     impact_b=(0.0, 0.0),
     N1: float | None = None,
     N2: float | None = None,
-    time_mode: str = "resummed",
     time_step: float | None = None,
     time_step_scale: float = 1.0e-4,
     return_details: bool = False,
@@ -875,18 +837,6 @@ def S_impulse_first_order(
         Transverse impact parameter.
     N1, N2:
         Optional precomputed packet normalizations.
-    time_mode:
-        "resummed" keeps the longitudinal exponential factor
-
-            exp(-b Omega^2 / c^2 - d Omega / c).
-
-        "expanded" uses the strictly expanded first-order expression
-
-            I0
-            + (2 Omega a / c^2 - Omega^2 b / c^2 - Omega d / c) I0
-            + i(2 Omega b / c^2 - 2a / c^2 + d / c) I1
-            + b / c^2 I2.
-
     return_details:
         If True, return ``(S, details)``.
 
@@ -968,13 +918,7 @@ def S_impulse_first_order(
         for multiplier in (-2.0, -1.0, 0.0, 1.0, 2.0)
     )
     I0, I1, I2 = _five_point_time_derivatives(samples, time_step)
-    time_block, time_details = _first_order_time_block(
-        time_mode,
-        longitudinal,
-        I0,
-        I1,
-        I2,
-    )
+    time_block, time_details = _first_order_time_block(longitudinal, I0, I1, I2)
 
     xi0_localization = (
         -longitudinal.delta_kz * longitudinal.delta_kz
@@ -998,7 +942,6 @@ def S_impulse_first_order(
     if return_details:
         details.update(
             dict(
-                time_mode=time_mode,
                 gamma1_first=longitudinal.gamma1,
                 gamma2_first=longitudinal.gamma2,
                 Omega_first=longitudinal.Omega,
@@ -1039,7 +982,6 @@ def S_impulse_first_order_grid(
     impact_b=(0.0, 0.0),
     N1: float | None = None,
     N2: float | None = None,
-    time_mode: str = "resummed",
     time_step: float | None = None,
     time_step_scale: float = 1.0e-4,
 ):
@@ -1096,7 +1038,7 @@ def S_impulse_first_order_grid(
         for multiplier in (-2.0, -1.0, 0.0, 1.0, 2.0)
     )
     I0, I1, I2 = _five_point_time_derivatives(samples, time_step)
-    time_block, _ = _first_order_time_block(time_mode, longitudinal, I0, I1, I2)
+    time_block, _ = _first_order_time_block(longitudinal, I0, I1, I2)
 
     xi0_localization = -longitudinal.delta_kz * longitudinal.delta_kz / (
         2.0
@@ -1130,18 +1072,6 @@ def _cached_exact_time_theta(n_theta: int, theta_method: str):
         endpoint=False,
     )
     return theta_nodes, theta_weights, np.cos(theta_nodes), np.sin(theta_nodes)
-
-
-@lru_cache(maxsize=64)
-def _cached_exact_time_chi(n_chi: int, chi_method: str):
-    """Return cached chi nodes, weights and trigonometric arrays."""
-    chi_nodes, chi_weights = nodes_and_weights(
-        (0.0, 0.5 * PI),
-        n_chi,
-        method=chi_method,
-        endpoint=True,
-    )
-    return chi_nodes, chi_weights, np.sin(chi_nodes), np.cos(chi_nodes)
 
 
 @lru_cache(maxsize=64)
@@ -1242,11 +1172,6 @@ def S_exact_time_grid(
         denominator_mode,
         ("expanded", "exact"),
         "denominator_mode",
-    )
-    radial_variable = _mode(
-        quadrature.radial_variable,
-        ("kappa", "chi"),
-        "quadrature.radial_variable",
     )
     batch_size = int(batch_size)
     if batch_size <= 0:
@@ -1371,68 +1296,8 @@ def S_exact_time_grid(
 
     active_indices = np.nonzero(active)[0]
 
-    if radial_variable == "chi":
-        _, chi_weights, sin_chi, cos_chi = _cached_exact_time_chi(
-            quadrature.n_chi,
-            quadrature.chi_method,
-        )
-        chi_weights = chi_weights[None, :, None]
-        sin_chi = sin_chi[None, :, None]
-        cos_chi = cos_chi[None, :, None]
-
-        for start in range(0, len(active_indices), batch_size):
-            idx = active_indices[start : start + batch_size]
-            bshape = (len(idx), 1, 1)
-
-            sqrt_D = sqrt_Delta0[idx].reshape(bshape)
-            C = C_z[idx].reshape(bshape)
-            D = D_z[idx].reshape(bshape)
-            R_batch = R[idx].reshape(bshape)
-
-            xi_plus = (-C + sqrt_D * cos_chi) / (2.0 * A_z)
-            xi_minus = (-C - sqrt_D * cos_chi) / (2.0 * A_z)
-            root_weight = (
-                np.exp(-B_z * xi_plus * xi_plus + D * xi_plus)
-                + np.exp(-B_z * xi_minus * xi_minus + D * xi_minus)
-            )
-            disk_radius = R_batch * sin_chi
-
-            qx = q0x[idx].reshape(bshape) + disk_radius * cos_theta
-            qy = q0y[idx].reshape(bshape) + disk_radius * sin_theta
-            weights = chi_weights * theta_weights * sin_chi * root_weight
-
-            A_perp = _exact_time_A_perp_grid(
-                qx,
-                qy,
-                Kx=Kx[idx].reshape(bshape),
-                Ky=Ky[idx].reshape(bshape),
-                k3x=k3x_f[idx].reshape(bshape),
-                k3y=k3y_f[idx].reshape(bshape),
-                k3_perp_sq=k3_perp_sq[idx].reshape(bshape),
-                b_perp=b_perp,
-                s1p=s1p,
-                s2p=s2p,
-                ell1=packet1.ell,
-                ell2=packet2.ell,
-                denominator_mode=denominator_mode,
-                denominator_regulator=denominator_regulator,
-            )
-            integral = np.sum(weights * A_perp, axis=(1, 2))
-            disk_factor = sqrt_Delta0[idx] / (2.0 * A_z * eta_perp)
-            out_f[idx] = (
-                prefactor[idx]
-                * np.exp(longitudinal_exp_arg[idx])
-                * disk_factor
-                * integral
-            )
-        return out
-
     n_kappa = quadrature.n_kappa
     kappa_method = quadrature.kappa_method
-    if n_kappa is None:
-        n_kappa = quadrature.n_chi
-    if kappa_method is None:
-        kappa_method = quadrature.chi_method
 
     unit_nodes, unit_weights = _cached_exact_time_unit_kappa(n_kappa, kappa_method)
     unit_nodes = unit_nodes[None, :, None]
@@ -1573,18 +1438,12 @@ def S_exact_time(
     complex or tuple[complex, dict]
         Exact-time S-matrix value, optionally with diagnostic details.
 
-    The exact-time disk can be integrated in two explicitly separated forms.
-    ``quadrature.radial_variable="chi"`` uses
-
-        q = q0 + R sin(chi) (cos theta, sin theta),
-
-    while ``quadrature.radial_variable="kappa"`` uses the direct disk formula
+    The exact-time disk is integrated with the direct radial formula
 
         q = q0 + kappa (cos theta, sin theta).
 
-    The kappa form can use a Gaussian-support cutoff.  This avoids missing
-    narrow transverse packet support when the exact-time disk radius is much
-    larger than the packet widths.
+    A Gaussian-support cutoff can be used to avoid wasting nodes when the
+    exact-time disk radius is much larger than the transverse packet widths.
 
     The exponent is evaluated through the algebraically combined
     ``Xi0 + Xi_perp`` form to avoid artificial cancellations.
@@ -1741,12 +1600,6 @@ def S_exact_time(
         / _packet_denominator(packet1, packet2)
     )
 
-    radial_variable = _mode(
-        quadrature.radial_variable,
-        ("kappa", "chi"),
-        "quadrature.radial_variable",
-    )
-
     def A_perp_grid(qx, qy):
         K_minus_qx = K_perp[0] - qx
         K_minus_qy = K_perp[1] - qy
@@ -1784,101 +1637,56 @@ def S_exact_time(
         return denominator_factor * transverse_exp * vortex_factor
 
     integral = complex_zero()
-    disk_curvature = None
+    sigma_eff = 1.0 / np.sqrt(1.0 / (s1p * s1p) + 1.0 / (s2p * s2p))
+    gaussian_center = (s1p * s1p / (s1p * s1p + s2p * s2p)) * K_perp
+    center_distance = np.linalg.norm(gaussian_center - q0)
+    disk_curvature = 2.0 * A_z * eta_perp / Delta0
 
-    if radial_variable == "chi":
-        _, chi_weights, sin_chi, cos_chi = _cached_exact_time_chi(
-            quadrature.n_chi,
-            quadrature.chi_method,
+    if quadrature.kappa_n_sigma is None:
+        radial_lower = 0.0
+        radial_upper = R
+    else:
+        support = quadrature.kappa_n_sigma * sigma_eff
+        radial_lower = max(0.0, center_distance - support)
+        radial_upper = min(R, center_distance + support)
+
+    if radial_upper > radial_lower:
+        (kappa_nodes, kappa_weights), _ = exact_time_nodes(
+            quadrature,
+            radial_interval=(radial_lower, radial_upper),
         )
         _, theta_weights, cos_theta, sin_theta = _cached_exact_time_theta(
             quadrature.n_theta,
             quadrature.theta_method,
         )
-        radial_lower = 0.0
-        radial_upper = 0.5 * PI
-        radial_n = quadrature.n_chi
-        radial_method = quadrature.chi_method
 
-        xi_plus = (-C_z + sqrt_Delta0 * cos_chi) / (2.0 * A_z)
-        xi_minus = (-C_z - sqrt_Delta0 * cos_chi) / (2.0 * A_z)
-        root_weight = (
-            np.exp(-B_z * xi_plus * xi_plus + D_z * xi_plus)
-            + np.exp(-B_z * xi_minus * xi_minus + D_z * xi_minus)
-        )
-        disk_radius = R * sin_chi
+        discriminant_factor = 1.0 - disk_curvature * kappa_nodes * kappa_nodes
+        valid = discriminant_factor > 0.0
 
-        qx = q0[0] + disk_radius[:, None] * cos_theta[None, :]
-        qy = q0[1] + disk_radius[:, None] * sin_theta[None, :]
-        weights = (
-            chi_weights[:, None]
-            * theta_weights[None, :]
-            * sin_chi[:, None]
-            * root_weight[:, None]
-        )
-        integral = np.sum(weights * A_perp_grid(qx, qy))
+        if np.any(valid):
+            kappa_nodes = kappa_nodes[valid]
+            kappa_weights = kappa_weights[valid]
+            sqrt_factor = np.sqrt(discriminant_factor[valid])
 
-        disk_factor = sqrt_Delta0 / (2.0 * A_z * eta_perp)
-
-    else:
-        sigma_eff = 1.0 / np.sqrt(1.0 / (s1p * s1p) + 1.0 / (s2p * s2p))
-        gaussian_center = (s1p * s1p / (s1p * s1p + s2p * s2p)) * K_perp
-        center_distance = np.linalg.norm(gaussian_center - q0)
-        disk_curvature = 2.0 * A_z * eta_perp / Delta0
-        disk_upper = R
-
-        if quadrature.kappa_n_sigma is None:
-            radial_lower = 0.0
-            radial_upper = disk_upper
-        else:
-            support = quadrature.kappa_n_sigma * sigma_eff
-            radial_lower = max(0.0, center_distance - support)
-            radial_upper = min(disk_upper, center_distance + support)
-
-        radial_n = quadrature.n_kappa
-        radial_method = quadrature.kappa_method
-        if radial_n is None:
-            radial_n = quadrature.n_chi
-        if radial_method is None:
-            radial_method = quadrature.chi_method
-
-        if radial_upper > radial_lower:
-            (kappa_nodes, kappa_weights), _ = exact_time_nodes(
-                quadrature,
-                radial_interval=(radial_lower, radial_upper),
-            )
-            _, theta_weights, cos_theta, sin_theta = _cached_exact_time_theta(
-                quadrature.n_theta,
-                quadrature.theta_method,
+            xi_plus = (-C_z + sqrt_Delta0 * sqrt_factor) / (2.0 * A_z)
+            xi_minus = (-C_z - sqrt_Delta0 * sqrt_factor) / (2.0 * A_z)
+            root_weight = (
+                np.exp(-B_z * xi_plus * xi_plus + D_z * xi_plus)
+                + np.exp(-B_z * xi_minus * xi_minus + D_z * xi_minus)
             )
 
-            discriminant_factor = 1.0 - disk_curvature * kappa_nodes * kappa_nodes
-            valid = discriminant_factor > 0.0
+            qx = q0[0] + kappa_nodes[:, None] * cos_theta[None, :]
+            qy = q0[1] + kappa_nodes[:, None] * sin_theta[None, :]
+            weights = (
+                kappa_weights[:, None]
+                * theta_weights[None, :]
+                * kappa_nodes[:, None]
+                / sqrt_factor[:, None]
+                * root_weight[:, None]
+            )
+            integral = np.sum(weights * A_perp_grid(qx, qy))
 
-            if np.any(valid):
-                kappa_nodes = kappa_nodes[valid]
-                kappa_weights = kappa_weights[valid]
-                sqrt_factor = np.sqrt(discriminant_factor[valid])
-
-                xi_plus = (-C_z + sqrt_Delta0 * sqrt_factor) / (2.0 * A_z)
-                xi_minus = (-C_z - sqrt_Delta0 * sqrt_factor) / (2.0 * A_z)
-                root_weight = (
-                    np.exp(-B_z * xi_plus * xi_plus + D_z * xi_plus)
-                    + np.exp(-B_z * xi_minus * xi_minus + D_z * xi_minus)
-                )
-
-                qx = q0[0] + kappa_nodes[:, None] * cos_theta[None, :]
-                qy = q0[1] + kappa_nodes[:, None] * sin_theta[None, :]
-                weights = (
-                    kappa_weights[:, None]
-                    * theta_weights[None, :]
-                    * kappa_nodes[:, None]
-                    / sqrt_factor[:, None]
-                    * root_weight[:, None]
-                )
-                integral = np.sum(weights * A_perp_grid(qx, qy))
-
-        disk_factor = 1.0 / sqrt_Delta0
+    disk_factor = 1.0 / sqrt_Delta0
 
     S = prefactor * np.exp(longitudinal_exp_arg) * disk_factor * integral
 
@@ -1912,11 +1720,10 @@ def S_exact_time(
             prefactor=prefactor,
             longitudinal_exp_arg=longitudinal_exp_arg,
             q_disk_radius=R,
-            radial_variable=radial_variable,
             radial_lower=radial_lower,
             radial_upper=radial_upper,
-            radial_n=radial_n,
-            radial_method=radial_method,
+            radial_n=quadrature.n_kappa,
+            radial_method=quadrature.kappa_method,
             disk_curvature=disk_curvature,
             disk_factor=disk_factor,
             integral=integral,
@@ -1925,92 +1732,6 @@ def S_exact_time(
             quadrature=quadrature,
             S_exact_time=S,
         )
-        return S, details
-
-    return S
-
-
-def S_impulse_numeric_transverse_quad(
-    k3,
-    k4,
-    packet1: LGPacket,
-    packet2: LGPacket,
-    lam1: float,
-    lam2: float,
-    lam3: float,
-    lam4: float,
-    m: float = ELECTRON_MASS,
-    e_charge: float = ELECTRON_CHARGE,
-    impact_b=(0.0, 0.0),
-    N1: float | None = None,
-    N2: float | None = None,
-    n_phi: int = 64,
-    return_details: bool = False,
-) -> complex | tuple[complex, dict]:
-    """Compute the impulse S matrix with numerical transverse integration.
-
-    Parameters
-    ----------
-    k3, k4:
-        Final three-momenta.
-    packet1, packet2:
-        Incoming wave packets.
-    lam1, lam2, lam3, lam4:
-        Helicity labels.
-    m, e_charge:
-        Particle mass and electric charge.
-    impact_b:
-        Transverse impact parameter.
-    N1, N2:
-        Optional precomputed packet normalizations.
-    n_phi:
-        Number of azimuthal nodes in the diagnostic transverse integration.
-    return_details:
-        If True, return ``(S, details)``.
-
-    Returns
-    -------
-    complex or tuple[complex, dict]
-        S-matrix value computed with numerical transverse integration.
-    """
-    common_factor, details = S_impulse_common_factor(
-        k3,
-        k4,
-        packet1,
-        packet2,
-        lam1,
-        lam2,
-        lam3,
-        lam4,
-        m=m,
-        e_charge=e_charge,
-        impact_b=impact_b,
-        N1=N1,
-        N2=N2,
-    )
-
-    if "reason" in details:
-        return (common_factor, details) if return_details else common_factor
-
-    k3_perp = vec3(k3)[:2]
-    b = vec2(impact_b)
-
-    Iperp_numeric = transverse_integral_numeric_quad(
-        packet1.ell,
-        packet2.ell,
-        k3_perp,
-        details["K_perp"],
-        b,
-        details["alpha"],
-        details["beta"],
-        details["gamma"],
-        n_phi=n_phi,
-    )
-
-    S = common_factor * Iperp_numeric
-
-    if return_details:
-        details.update(dict(Iperp_numeric=Iperp_numeric))
         return S, details
 
     return S

@@ -163,12 +163,6 @@ $$
 
 Returns the momentum-space packet wave function factor. This is useful for direct checks or for building diagnostic plots of the packet in momentum space.
 
-### `vortex_factor(...)`
-
-Returns the OAM phase and radial factor associated with a packet.
-
----
-
 ## 4. Normalization
 
 ### `normalization_constant(packet, m=..., *, quad_epsabs=..., quad_epsrel=..., quad_limit=...)`
@@ -426,14 +420,6 @@ D^{(-,+)}_{a,b}
 D_{a,b}\left(p_-,q_+;\frac{2}{A}\right).
 $$
 
-### `transverse_integral_numeric_quad(...)`
-
-Numerical check for the same first-order transverse integral.
-
-This is intended for verification, not for production scans.
-
----
-
 ## 8. S-matrix routines
 
 ### `impulse_parameters(...)`
@@ -490,13 +476,10 @@ Inputs:
 - `impact_b`: 2-vector in MeV$$^{-1}$$.
 - `N1`, `N2`: normalization constants. If omitted, they may be recomputed.
 
-### `S_impulse_numeric_transverse_quad(...)`
-
-Same impulse S-matrix expression, but with the transverse integral computed numerically. This is a diagnostic routine used to validate the analytic transverse expression.
-
 ### `S_impulse_first_order(...)`
 
-First-order time-correction routine. The public `time_mode` selector is still `"resummed"` or `"expanded"`.
+First-order time-correction routine. The time block is evaluated in the single
+resummed form used by the current code.
 
 Internally, the code is split into small explicit steps:
 
@@ -504,21 +487,15 @@ Internally, the code is split into small explicit steps:
 2. choose or use the finite-difference `time_step`;
 3. evaluate the transverse integral at `-2h`, `-h`, `0`, `h`, `2h`;
 4. build `I0`, `I1`, `I2`;
-5. assemble the selected time block.
+5. assemble the time block.
 
 ### `S_exact_time(...)` and `ExactTimeQuadrature`
 
-`S_exact_time(...)` uses `mv.ExactTimeQuadrature`.  The exact-time disk now has
-two separate radial formulas, selected by `radial_variable`:
-
-- `"kappa"`: direct integration in `q = q0 + kappa (cos theta, sin theta)`;
-- `"chi"`: regularized integration in `q = q0 + R sin(chi) (cos theta, sin theta)`.
-
-For the direct kappa formula use `n_kappa` and `kappa_method`:
+`S_exact_time(...)` uses `mv.ExactTimeQuadrature` and the direct kappa disk
+formula
 
 ```python
 exact_quad = mv.ExactTimeQuadrature(
-    radial_variable="kappa",
     n_kappa=257,
     n_theta=128,
     kappa_method="boole",
@@ -527,28 +504,9 @@ exact_quad = mv.ExactTimeQuadrature(
 )
 ```
 
-For the chi formula use `n_chi` and `chi_method`:
-
-```python
-exact_quad = mv.ExactTimeQuadrature(
-    radial_variable="chi",
-    n_chi=65,
-    n_theta=128,
-    chi_method="boole",
-    theta_method="trapezoid",
-)
-```
-
-The helper `exact_time_nodes(...)` builds the selected radial nodes.  For the
-chi formula no interval is needed:
-
-```python
-(chi_nodes, chi_weights), \
-(theta_nodes, theta_weights) = mv.exact_time_nodes(exact_quad)
-```
-
-For the direct kappa formula, the scalar diagnostic path computes the physical
-radial interval and passes it into `exact_time_nodes(...)`. The vectorized batch
+The helper `exact_time_nodes(...)` builds kappa and theta nodes. The scalar
+diagnostic path computes the physical radial interval and passes it into
+`exact_time_nodes(...)`. The vectorized batch
 path uses the same node convention but maps each point's physical kappa interval
 from unit nodes internally, because the useful interval can differ from one
 external phase-space point to another.
@@ -559,13 +517,6 @@ $$
 \int_0^{2\pi}d\theta
 \int d\kappa\,
 \frac{\kappa}{\sqrt{1-\mathrm{disk\_curvature}\,\kappa^2}}.
-$$
-
-The chi formula corresponds to
-
-$$
-\int_0^{2\pi}d\theta
-\int_0^{\pi/2}d\chi\,\sin\chi.
 $$
 
 ---
@@ -752,35 +703,6 @@ $$
 W_i=\frac{b-a}{2}w_i.
 $$
 
-### `spin_averaged_s_abs2(...)`
-
-Computes
-
-$$
-\frac{1}{4}
-\sum_{\lambda_1,\lambda_2}
-\sum_{\lambda_3,\lambda_4}
-|S_{fi}|^2
-$$
-
-for the selected S-matrix routine.
-
-Because the currently implemented spin dependence is only
-
-$$
-\delta_{\lambda_3\lambda_1}\delta_{\lambda_4\lambda_2},
-$$
-
-the default branch computes one helicity-conserving amplitude and returns its squared modulus.
-
-Use
-
-```python
-explicit_spin_sum=True
-```
-
-only as a diagnostic, because it performs all 16 helicity combinations.
-
 ### `diff_probability(...)`
 
 Computes $$w(\mathbf K_\perp)$$ at one fixed value of $$\mathbf K_\perp$$.
@@ -881,7 +803,6 @@ z_value = mv.longitudinal_density(
     N1=N1,
     N2=N2,
     s_matrix="first_order",
-    s_matrix_kwargs={"time_mode": "resummed"},
 )
 ```
 

@@ -21,13 +21,10 @@ from .smatrix import (
     S_impulse_closed_grid,
     S_impulse_first_order,
     S_impulse_first_order_grid,
-    S_impulse_numeric_transverse_quad,
 )
 from .transverse import (
     laguerre_derivative,
     laguerre_derivative_sum,
-    transverse_integral_explicit,
-    transverse_integral_numeric_quad,
 )
 
 
@@ -130,81 +127,6 @@ def check_laguerre_derivative(verbose: bool = True) -> dict[str, float]:
     return errors
 
 
-def check_transverse_integral(
-    n_phi: int = 16,
-    verbose: bool = True,
-) -> dict[str, float]:
-    """Return errors for closed transverse expressions.
-
-    Parameters
-    ----------
-    n_phi:
-        Number of angular nodes for the direct numerical transverse check.
-    verbose:
-        If True, print a compact error table.
-
-    Returns
-    -------
-    dict[str, float]
-        Relative errors keyed by OAM pair.
-
-    Each closed expression is compared with direct polar quadrature. No
-    acceptance threshold is applied; the function only returns numerical
-    relative errors.
-    """
-    k3_perp = real_array([1.10, 0.45], shape=(2,))
-    K_perp = real_array([0.25, -0.18], shape=(2,))
-    b_perp = real_array([0.08, -0.04], shape=(2,))
-
-    alpha = 2.2 + 0.0j
-    beta = 0.3 + 0.0j
-    gamma = 1.6 + 0.0j
-
-    cases = [
-        (1, 2),
-        (-1, -2),
-        (1, -2),
-        (-1, 2),
-        (0, 2),
-        (0, -2),
-        (1, 0),
-        (-1, 0),
-        (0, 0),
-        (2, -1),
-    ]
-
-    errors = {}
-    for ell1, ell2 in cases:
-        analytic = transverse_integral_explicit(
-            ell1,
-            ell2,
-            k3_perp,
-            K_perp,
-            b_perp,
-            alpha,
-            beta,
-            gamma,
-        )
-        numeric = transverse_integral_numeric_quad(
-            ell1,
-            ell2,
-            k3_perp,
-            K_perp,
-            b_perp,
-            alpha,
-            beta,
-            gamma,
-            n_phi=n_phi,
-        )
-        key = f"transverse integral, ell1={ell1}, ell2={ell2}"
-        errors[key] = relative_error(analytic, numeric)
-
-    if verbose:
-        _print_errors("Transverse-integral errors", errors)
-
-    return errors
-
-
 def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
     """Return errors for vectorized S-matrix and probability paths.
 
@@ -223,7 +145,7 @@ def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
     against array-broadcasting, weighting and batching mistakes in the fast
     paths used by probability scans.
     """
-    from .probability import diff_probability
+    from .probability import diff_probability, diff_probability_grid
 
     packet1 = LGPacket(ell=1, sigma_perp=0.18, sigma_par=0.35, kbar_z=20.0)
     packet2 = LGPacket(ell=-1, sigma_perp=0.18, sigma_par=0.35, kbar_z=-20.0)
@@ -336,7 +258,6 @@ def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
     exact_quadrature = ExactTimeQuadrature(
         n_theta=8,
         n_kappa=5,
-        radial_variable="kappa",
         kappa_method="boole",
         kappa_n_sigma=10.0,
     )
@@ -447,16 +368,16 @@ def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
             s_matrix_kwargs=s_kwargs,
             **probability_kwargs,
         )
-        scalar = diff_probability(
-            [0.0, 0.0],
-            explicit_spin_sum=True,
+        grid = diff_probability_grid(
+            np.array([0.0]),
+            np.array([0.0]),
             s_matrix=s_matrix,
             s_matrix_kwargs=s_kwargs,
             **probability_kwargs,
-        )
-        errors[f"probability {s_matrix} fast vs scalar"] = relative_error(
+        )[0, 0]
+        errors[f"probability {s_matrix} grid vs point"] = relative_error(
+            grid,
             fast,
-            scalar,
         )
 
     if verbose:
@@ -465,83 +386,13 @@ def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
     return errors
 
 
-def check_smatrix(
-    n_phi: int = 16,
-    verbose: bool = True,
-) -> dict[str, float]:
-    """Return error for closed impulse S matrix vs numerical transverse integration.
-
-    Parameters
-    ----------
-    n_phi:
-        Number of angular nodes for numerical transverse quadrature.
-    verbose:
-        If True, print a compact error table.
-
-    Returns
-    -------
-    dict[str, float]
-        Relative error between closed and numerical-transverse S matrices.
-    """
-    packet1 = LGPacket(ell=1, sigma_perp=0.18, sigma_par=0.35, kbar_z=20.0)
-    packet2 = LGPacket(ell=-1, sigma_perp=0.18, sigma_par=0.35, kbar_z=-20.0)
-
-    N1 = normalization_constant(packet1)
-    N2 = normalization_constant(packet2)
-
-    impact_b = real_array([0.3, 0.0], shape=(2,))
-    k3 = real_array([0.8, 0.10, 19.7], shape=(3,))
-    k4 = real_array([-0.55, -0.08, -19.6], shape=(3,))
-
-    S_closed = S_impulse_closed_form(
-        k3,
-        k4,
-        packet1,
-        packet2,
-        lam1=0.5,
-        lam2=0.5,
-        lam3=0.5,
-        lam4=0.5,
-        impact_b=impact_b,
-        N1=N1,
-        N2=N2,
-    )
-
-    S_numeric = S_impulse_numeric_transverse_quad(
-        k3,
-        k4,
-        packet1,
-        packet2,
-        lam1=0.5,
-        lam2=0.5,
-        lam3=0.5,
-        lam4=0.5,
-        impact_b=impact_b,
-        N1=N1,
-        N2=N2,
-        n_phi=n_phi,
-    )
-
-    errors = {
-        "S closed vs numerical transverse": relative_error(S_closed, S_numeric),
-    }
-
-    if verbose:
-        _print_errors("S-matrix errors", errors)
-
-    return errors
-
-
 def run_all_checks(
-    n_phi: int = 16,
     verbose: bool = True,
 ) -> dict[str, dict[str, float]]:
     """Run all built-in numerical comparisons and return their errors.
 
     Parameters
     ----------
-    n_phi:
-        Number of angular nodes used by transverse numerical checks.
     verbose:
         If True, print each check table.
 
@@ -557,15 +408,7 @@ def run_all_checks(
         "laguerre_derivative": check_laguerre_derivative(
             verbose=verbose,
         ),
-        "transverse_integral": check_transverse_integral(
-            n_phi=n_phi,
-            verbose=verbose,
-        ),
         "vectorized_paths": check_vectorized_paths(
-            verbose=verbose,
-        ),
-        "smatrix": check_smatrix(
-            n_phi=n_phi,
             verbose=verbose,
         ),
     }

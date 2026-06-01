@@ -12,8 +12,6 @@ from .amplitudes import moller_amplitude_impulse
 from .checks import (
     check_laguerre_derivative,
     check_normalization,
-    check_smatrix,
-    check_transverse_integral,
     check_vectorized_paths,
     run_all_checks,
 )
@@ -59,7 +57,6 @@ from .probability import (
     diff_probability_grid,
     longitudinal_density,
     longitudinal_density_grid,
-    spin_averaged_s_abs2,
     total_probability,
 )
 from .quadrature import (
@@ -83,7 +80,6 @@ from .smatrix import (
     S_impulse_common_factor,
     S_impulse_first_order,
     S_impulse_first_order_grid,
-    S_impulse_numeric_transverse_quad,
     impulse_parameters,
 )
 from .transverse import (
@@ -91,8 +87,6 @@ from .transverse import (
     laguerre_derivative_sum,
     transverse_integral_explicit,
     transverse_integral_explicit_grid,
-    transverse_integral_numeric_quad,
-    vortex_factor,
 )
 
 __all__ = [
@@ -118,14 +112,11 @@ __all__ = [
     "S_impulse_common_factor",
     "S_impulse_first_order",
     "S_impulse_first_order_grid",
-    "S_impulse_numeric_transverse_quad",
     "absolute_error",
     "boole_nodes_and_weights",
     "central_energy",
     "check_laguerre_derivative",
     "check_normalization",
-    "check_smatrix",
-    "check_transverse_integral",
     "check_vectorized_paths",
     "complex_array",
     "complex_zero",
@@ -157,13 +148,10 @@ __all__ = [
     "run_all_checks",
     "spatial_width_nm_to_momentum_mev",
     "spherical_normalization_constant",
-    "spin_averaged_s_abs2",
     "total_probability",
     "trapezoid_nodes_and_weights",
     "transverse_integral_explicit",
     "transverse_integral_explicit_grid",
-    "transverse_integral_numeric_quad",
     "vec2",
     "vec3",
-    "vortex_factor",
 ]

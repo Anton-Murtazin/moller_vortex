@@ -104,17 +104,14 @@ The quadrature dataclasses only store settings. Nodes and weights are built by:
 ```python
 mv.probability_inner_nodes(quadrature)
 mv.probability_outer_nodes(quadrature)
-mv.exact_time_nodes(exact_quad)  # chi
 mv.exact_time_nodes(exact_quad, radial_interval=(kappa_min, kappa_max))  # kappa
 ```
 
-For `S_exact_time`, choose the radial formula with
-`ExactTimeQuadrature(radial_variable="kappa")` or
-`ExactTimeQuadrature(radial_variable="chi")`.  The direct kappa formula uses
-`n_kappa/kappa_method` and passes its physical radial interval into
-`exact_time_nodes` in the scalar diagnostic path. The vectorized batch path maps
-per-point kappa intervals from unit nodes internally. The chi formula uses
-`n_chi/chi_method`.
+`S_exact_time` uses only the direct kappa disk formula. `ExactTimeQuadrature`
+stores `n_kappa/kappa_method`, `n_theta/theta_method`, and the optional
+`kappa_n_sigma` cutoff. The scalar diagnostic path passes the physical radial
+interval into `exact_time_nodes(...)`; the vectorized batch path maps the same
+node convention to each point's physical interval internally.
 
 For probability integrals the finite-axis defaults are composite Boole, so use node counts of the form `n = 4*m + 1`, for example `9`, `17`, or `25`. Periodic angular axes use endpoint-free trapezoid quadrature by default.
 
@@ -136,7 +133,6 @@ they only print and return the numerical errors.
 
 ```python
 results = mv.run_all_checks(
-    n_phi=16,
     verbose=True,
 )
 ```
@@ -146,9 +142,7 @@ Individual checks are also available:
 ```python
 mv.check_normalization()
 mv.check_laguerre_derivative()
-mv.check_transverse_integral(n_phi=16)
 mv.check_vectorized_paths()
-mv.check_smatrix(n_phi=16)
 ```
 
 The returned dictionaries contain raw relative errors. The interpretation of those errors is left to the analysis notebook. The checks compare:
