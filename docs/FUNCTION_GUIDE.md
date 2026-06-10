@@ -497,16 +497,33 @@ formula
 ```python
 exact_quad = mv.ExactTimeQuadrature(
     n_kappa=257,
-    n_theta=128,
     kappa_method="boole",
-    theta_method="trapezoid",
+    theta_method="analytic",
     kappa_n_sigma=10.0,
 )
 ```
 
-The helper `exact_time_nodes(...)` builds kappa and theta nodes. The scalar
-diagnostic path computes the physical radial interval and passes it into
-`exact_time_nodes(...)`. The vectorized batch
+This is the default production mode for the expanded Moller denominator.  In
+this mode `n_theta` is ignored. Use direct numerical theta quadrature only for
+diagnostics or for `denominator_mode="exact"`:
+
+```python
+exact_quad = mv.ExactTimeQuadrature(
+    n_kappa=257,
+    n_theta=128,
+    theta_method="trapezoid",
+    kappa_method="boole",
+    kappa_n_sigma=10.0,
+)
+```
+
+The analytic theta formula is available only for
+`denominator_mode="expanded"` because it uses the polynomial form of the
+expanded denominator.
+
+The helper `exact_time_nodes(...)` builds kappa and, for numerical theta
+quadrature, theta nodes. The scalar diagnostic path computes the physical
+radial interval and passes it into `exact_time_nodes(...)`. The vectorized batch
 path uses the same node convention but maps each point's physical kappa interval
 from unit nodes internally, because the useful interval can differ from one
 external phase-space point to another.
@@ -1149,7 +1166,9 @@ A sensible workflow is:
 
 For `s_matrix="exact_time"`, pass `s_matrix_kwargs={"batch_size": ...}` when
 memory or runtime needs tuning. Larger batches reduce Python overhead but build
-larger temporary arrays of shape roughly `(batch_size, n_kappa, n_theta)`.
+larger temporary arrays. With numerical theta quadrature the dominant internal
+shape is roughly `(batch_size, n_kappa, n_theta)`; with
+`theta_method="analytic"` it is roughly `(batch_size, n_kappa)`.
 For grid scans, `longitudinal_density_grid(...)`, `diff_probability_grid(...)`,
 `total_probability(...)`, and `Ky_average(...)` also accept `workers=N`.
 `workers` parallelizes independent outer points, while `batch_size` controls

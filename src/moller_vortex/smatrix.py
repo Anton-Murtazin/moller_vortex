@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 import numpy as np
+from scipy.special import ive
 
 from .constants import (
     COMPLEX_DTYPE,
@@ -1065,6 +1066,8 @@ def _vortex_monomial_z(z, ell: int):
 @lru_cache(maxsize=64)
 def _cached_exact_time_theta(n_theta: int, theta_method: str):
     """Return cached theta nodes, weights and trigonometric arrays."""
+    if theta_method == "analytic":
+        raise ValueError("theta_method='analytic' has no theta nodes.")
     theta_nodes, theta_weights = nodes_and_weights(
         (0.0, 2.0 * PI),
         n_theta,
@@ -1135,6 +1138,164 @@ def _exact_time_A_perp_grid(
     return denominator_factor * transverse_exp * vortex_factor
 
 
+def _angular_kernels_with_exponent(min_m: int, max_m: int, u, v, C_perp):
+    """Return exp(C_perp) K_m(u, v) for a contiguous integer m range."""
+    u = np.asarray(u, dtype=COMPLEX_DTYPE)
+    v = np.asarray(v, dtype=COMPLEX_DTYPE)
+    C_perp = np.asarray(C_perp, dtype=COMPLEX_DTYPE)
+    u, v, C_perp = np.broadcast_arrays(u, v, C_perp)
+
+    zero_mask = (np.abs(u) == 0.0) | (np.abs(v) == 0.0)
+    bessel_mask = ~zero_mask
+    kernels = {}
+
+    if np.any(bessel_mask):
+        sqrt_u = np.sqrt(u[bessel_mask])
+        sqrt_v = np.sqrt(v[bessel_mask])
+        z = 2.0 * sqrt_u * sqrt_v
+        scale = np.exp(C_perp[bessel_mask] + np.abs(np.real(z)))
+        ratio_base = sqrt_v / sqrt_u
+
+    if np.any(zero_mask):
+        u_zero = u[zero_mask]
+        v_zero = v[zero_mask]
+        exp_C_zero = np.exp(C_perp[zero_mask])
+        u_is_zero = np.abs(u_zero) == 0.0
+        v_is_zero = np.abs(v_zero) == 0.0
+        both_zero = u_is_zero & v_is_zero
+        u_only_zero = u_is_zero & ~v_is_zero
+        v_only_zero = v_is_zero & ~u_is_zero
+
+    for m in range(min_m, max_m + 1):
+        kernel = np.empty_like(u, dtype=COMPLEX_DTYPE)
+        if np.any(bessel_mask):
+            kernel[bessel_mask] = scale * ive(abs(m), z) * ratio_base ** m
+        if np.any(zero_mask):
+            zero_kernel = np.zeros_like(u_zero, dtype=COMPLEX_DTYPE)
+            if m == 0:
+                zero_kernel[both_zero] = 1.0
+            if m >= 0:
+                zero_kernel[u_only_zero] = (
+                    v_zero[u_only_zero] ** m / math.factorial(m)
+                )
+            if m <= 0:
+                zero_kernel[v_only_zero] = (
+                    u_zero[v_only_zero] ** (-m) / math.factorial(-m)
+                )
+            kernel[zero_mask] = exp_C_zero * zero_kernel
+        kernels[m] = kernel
+
+    return kernels
+
+
+def _source_derivative_terms(base, kappa, power: int, sign: float):
+    """Return binomial terms for one source derivative block."""
+    return [
+        math.comb(power, index)
+        * base ** (power - index)
+        * (sign * kappa) ** index
+        for index in range(power + 1)
+    ]
+
+
+def _source_derivative_convolution(q0, p0, kappa, q_power: int, p_power: int):
+    """Return coefficients summed over source derivatives with equal order."""
+    q_terms = _source_derivative_terms(q0, kappa, q_power, +1.0)
+    p_terms = _source_derivative_terms(p0, kappa, p_power, -1.0)
+    coefficients = []
+    for order in range(q_power + p_power + 1):
+        coeff = np.zeros_like(kappa, dtype=COMPLEX_DTYPE)
+        q_min = max(0, order - p_power)
+        q_max = min(q_power, order)
+        for q_index in range(q_min, q_max + 1):
+            coeff = coeff + q_terms[q_index] * p_terms[order - q_index]
+        coefficients.append(coeff)
+    return coefficients
+
+
+def _exact_time_D_from_terms(plus_terms, minus_terms, kernels_scaled):
+    """Return exp(C_perp) D from precomputed source-derivative terms."""
+    total = np.zeros_like(plus_terms[0], dtype=COMPLEX_DTYPE)
+    for plus_order, plus_term in enumerate(plus_terms):
+        for minus_order, minus_term in enumerate(minus_terms):
+            total = total + (
+                plus_term
+                * minus_term
+                * kernels_scaled[plus_order - minus_order]
+            )
+    return total
+
+
+def _exact_time_angular_integral_expanded(
+    kappa,
+    *,
+    Kx,
+    Ky,
+    q0x,
+    q0y,
+    k3x,
+    k3y,
+    k3_perp_sq,
+    b_perp,
+    s1p: float,
+    s2p: float,
+    ell1: int,
+    ell2: int,
+):
+    """Return the analytic theta integral for the expanded exact-time integrand."""
+    kappa = np.asarray(kappa, dtype=FLOAT_DTYPE)
+
+    p0x = Kx - q0x
+    p0y = Ky - q0y
+
+    q0_plus = q0x + 1j * q0y
+    q0_minus = q0x - 1j * q0y
+    p0_plus = p0x + 1j * p0y
+    p0_minus = p0x - 1j * p0y
+
+    q0_sq = q0x * q0x + q0y * q0y
+    p0_sq = p0x * p0x + p0y * p0y
+    kappa_sq = kappa * kappa
+    C_perp = (
+        -0.5 * (q0_sq + kappa_sq) / (s1p * s1p)
+        -0.5 * (p0_sq + kappa_sq) / (s2p * s2p)
+        + 1j * (b_perp[0] * p0x + b_perp[1] * p0y)
+    )
+
+    alpha_x = kappa * (-q0x / (s1p * s1p) + p0x / (s2p * s2p) - 1j * b_perp[0])
+    alpha_y = kappa * (-q0y / (s1p * s1p) + p0y / (s2p * s2p) - 1j * b_perp[1])
+    u = 0.5 * (alpha_x - 1j * alpha_y)
+    v = 0.5 * (alpha_x + 1j * alpha_y)
+
+    L1 = abs(ell1)
+    L2 = abs(ell2)
+    a = L1 if ell1 >= 0 else 0
+    b = 0 if ell1 >= 0 else L1
+    c = L2 if ell2 >= 0 else 0
+    d = 0 if ell2 >= 0 else L2
+
+    min_m = -(b + d + 1)
+    max_m = a + c + 1
+    kernels_scaled = _angular_kernels_with_exponent(min_m, max_m, u, v, C_perp)
+
+    plus_base = _source_derivative_convolution(q0_plus, p0_plus, kappa, a, c)
+    plus_q = _source_derivative_convolution(q0_plus, p0_plus, kappa, a + 1, c)
+    minus_base = _source_derivative_convolution(q0_minus, p0_minus, kappa, b, d)
+    minus_q = _source_derivative_convolution(q0_minus, p0_minus, kappa, b + 1, d)
+
+    D0 = _exact_time_D_from_terms(plus_base, minus_base, kernels_scaled)
+    D_plus = _exact_time_D_from_terms(plus_q, minus_base, kernels_scaled)
+    D_minus = _exact_time_D_from_terms(plus_base, minus_q, kernels_scaled)
+
+    k3_plus = k3x + 1j * k3y
+    k3_minus = k3x - 1j * k3y
+    return 2.0 * PI * (
+        D0 / k3_perp_sq
+        + (k3_minus * D_plus + k3_plus * D_minus)
+        / (k3_perp_sq * k3_perp_sq)
+    )
+
+
 def S_exact_time_grid(
     k3x,
     k3y,
@@ -1160,10 +1321,10 @@ def S_exact_time_grid(
 ):
     """Vectorized exact-time S matrix on broadcastable momentum grids.
 
-    The outer probability grid is processed in batches.  Each batch builds
-    arrays of shape ``(batch, n_radial, n_theta)`` for the internal exact-time
-    disk integral, which keeps memory bounded while removing Python loops over
-    individual final-momentum points.
+    The outer probability grid is processed in batches. Numerical theta
+    quadrature builds arrays of shape ``(batch, n_radial, n_theta)``; analytic
+    theta integration uses ``(batch, n_radial)`` arrays. Both paths keep memory
+    bounded while removing Python loops over individual final-momentum points.
     """
     packet1 = packet1.checked()
     packet2 = packet2.checked()
@@ -1173,6 +1334,12 @@ def S_exact_time_grid(
         ("expanded", "exact"),
         "denominator_mode",
     )
+    analytic_theta = quadrature.theta_method == "analytic"
+    if analytic_theta and denominator_mode != "expanded":
+        raise ValueError(
+            "theta_method='analytic' is implemented only for "
+            "denominator_mode='expanded'."
+        )
     batch_size = int(batch_size)
     if batch_size <= 0:
         raise ValueError("batch_size must be positive.")
@@ -1286,13 +1453,14 @@ def S_exact_time_grid(
         / _packet_denominator(packet1, packet2)
     )
 
-    _, theta_weights, cos_theta, sin_theta = _cached_exact_time_theta(
-        quadrature.n_theta,
-        quadrature.theta_method,
-    )
-    theta_weights = theta_weights[None, None, :]
-    cos_theta = cos_theta[None, None, :]
-    sin_theta = sin_theta[None, None, :]
+    if not analytic_theta:
+        _, theta_weights, cos_theta, sin_theta = _cached_exact_time_theta(
+            quadrature.n_theta,
+            quadrature.theta_method,
+        )
+        theta_weights = theta_weights[None, None, :]
+        cos_theta = cos_theta[None, None, :]
+        sin_theta = sin_theta[None, None, :]
 
     active_indices = np.nonzero(active)[0]
 
@@ -1345,34 +1513,66 @@ def S_exact_time_grid(
             + np.exp(-B_z * xi_minus * xi_minus + D * xi_minus)
         )
 
-        qx = q0x[idx].reshape(bshape) + kappa_nodes * cos_theta
-        qy = q0y[idx].reshape(bshape) + kappa_nodes * sin_theta
-        weights = (
-            kappa_weights
-            * theta_weights
-            * kappa_nodes
-            / sqrt_factor
-            * root_weight
-            * valid
-        )
+        if analytic_theta:
+            kappa_2d = kappa_nodes[:, :, 0]
+            kappa_weights_2d = kappa_weights[:, :, 0]
+            sqrt_factor_2d = sqrt_factor[:, :, 0]
+            root_weight_2d = root_weight[:, :, 0]
+            valid_2d = valid[:, :, 0]
+            row_shape = (len(idx), 1)
 
-        A_perp = _exact_time_A_perp_grid(
-            qx,
-            qy,
-            Kx=Kx[idx].reshape(bshape),
-            Ky=Ky[idx].reshape(bshape),
-            k3x=k3x_f[idx].reshape(bshape),
-            k3y=k3y_f[idx].reshape(bshape),
-            k3_perp_sq=k3_perp_sq[idx].reshape(bshape),
-            b_perp=b_perp,
-            s1p=s1p,
-            s2p=s2p,
-            ell1=packet1.ell,
-            ell2=packet2.ell,
-            denominator_mode=denominator_mode,
-            denominator_regulator=denominator_regulator,
-        )
-        integral = np.sum(weights * A_perp, axis=(1, 2))
+            angular_integral = _exact_time_angular_integral_expanded(
+                kappa_2d,
+                Kx=Kx[idx].reshape(row_shape),
+                Ky=Ky[idx].reshape(row_shape),
+                q0x=q0x[idx].reshape(row_shape),
+                q0y=q0y[idx].reshape(row_shape),
+                k3x=k3x_f[idx].reshape(row_shape),
+                k3y=k3y_f[idx].reshape(row_shape),
+                k3_perp_sq=k3_perp_sq[idx].reshape(row_shape),
+                b_perp=b_perp,
+                s1p=s1p,
+                s2p=s2p,
+                ell1=packet1.ell,
+                ell2=packet2.ell,
+            )
+            weights = (
+                kappa_weights_2d
+                * kappa_2d
+                / sqrt_factor_2d
+                * root_weight_2d
+                * valid_2d
+            )
+            integral = np.sum(weights * angular_integral, axis=1)
+        else:
+            qx = q0x[idx].reshape(bshape) + kappa_nodes * cos_theta
+            qy = q0y[idx].reshape(bshape) + kappa_nodes * sin_theta
+            weights = (
+                kappa_weights
+                * theta_weights
+                * kappa_nodes
+                / sqrt_factor
+                * root_weight
+                * valid
+            )
+
+            A_perp = _exact_time_A_perp_grid(
+                qx,
+                qy,
+                Kx=Kx[idx].reshape(bshape),
+                Ky=Ky[idx].reshape(bshape),
+                k3x=k3x_f[idx].reshape(bshape),
+                k3y=k3y_f[idx].reshape(bshape),
+                k3_perp_sq=k3_perp_sq[idx].reshape(bshape),
+                b_perp=b_perp,
+                s1p=s1p,
+                s2p=s2p,
+                ell1=packet1.ell,
+                ell2=packet2.ell,
+                denominator_mode=denominator_mode,
+                denominator_regulator=denominator_regulator,
+            )
+            integral = np.sum(weights * A_perp, axis=(1, 2))
         disk_factor = 1.0 / sqrt_Delta0[idx]
         out_f[idx] = (
             prefactor[idx]
@@ -1442,6 +1642,10 @@ def S_exact_time(
 
         q = q0 + kappa (cos theta, sin theta).
 
+    With ``quadrature.theta_method="analytic"``, the theta integral is
+    evaluated in closed form for ``denominator_mode="expanded"``. Otherwise
+    theta is integrated by the quadrature rule named in ``theta_method``.
+
     A Gaussian-support cutoff can be used to avoid wasting nodes when the
     exact-time disk radius is much larger than the transverse packet widths.
 
@@ -1456,6 +1660,12 @@ def S_exact_time(
         ("expanded", "exact"),
         "denominator_mode",
     )
+    analytic_theta = quadrature.theta_method == "analytic"
+    if analytic_theta and denominator_mode != "expanded":
+        raise ValueError(
+            "theta_method='analytic' is implemented only for "
+            "denominator_mode='expanded'."
+        )
 
     if not return_details:
         k3_vec = vec3(k3)
@@ -1655,10 +1865,6 @@ def S_exact_time(
             quadrature,
             radial_interval=(radial_lower, radial_upper),
         )
-        _, theta_weights, cos_theta, sin_theta = _cached_exact_time_theta(
-            quadrature.n_theta,
-            quadrature.theta_method,
-        )
 
         discriminant_factor = 1.0 - disk_curvature * kappa_nodes * kappa_nodes
         valid = discriminant_factor > 0.0
@@ -1675,16 +1881,39 @@ def S_exact_time(
                 + np.exp(-B_z * xi_minus * xi_minus + D_z * xi_minus)
             )
 
-            qx = q0[0] + kappa_nodes[:, None] * cos_theta[None, :]
-            qy = q0[1] + kappa_nodes[:, None] * sin_theta[None, :]
-            weights = (
-                kappa_weights[:, None]
-                * theta_weights[None, :]
-                * kappa_nodes[:, None]
-                / sqrt_factor[:, None]
-                * root_weight[:, None]
-            )
-            integral = np.sum(weights * A_perp_grid(qx, qy))
+            if analytic_theta:
+                angular_integral = _exact_time_angular_integral_expanded(
+                    kappa_nodes,
+                    Kx=K_perp[0],
+                    Ky=K_perp[1],
+                    q0x=q0[0],
+                    q0y=q0[1],
+                    k3x=k3_perp[0],
+                    k3y=k3_perp[1],
+                    k3_perp_sq=k3_perp_sq,
+                    b_perp=b_perp,
+                    s1p=s1p,
+                    s2p=s2p,
+                    ell1=packet1.ell,
+                    ell2=packet2.ell,
+                )
+                weights = kappa_weights * kappa_nodes / sqrt_factor * root_weight
+                integral = np.sum(weights * angular_integral)
+            else:
+                _, theta_weights, cos_theta, sin_theta = _cached_exact_time_theta(
+                    quadrature.n_theta,
+                    quadrature.theta_method,
+                )
+                qx = q0[0] + kappa_nodes[:, None] * cos_theta[None, :]
+                qy = q0[1] + kappa_nodes[:, None] * sin_theta[None, :]
+                weights = (
+                    kappa_weights[:, None]
+                    * theta_weights[None, :]
+                    * kappa_nodes[:, None]
+                    / sqrt_factor[:, None]
+                    * root_weight[:, None]
+                )
+                integral = np.sum(weights * A_perp_grid(qx, qy))
 
     disk_factor = 1.0 / sqrt_Delta0
 
@@ -1724,6 +1953,8 @@ def S_exact_time(
             radial_upper=radial_upper,
             radial_n=quadrature.n_kappa,
             radial_method=quadrature.kappa_method,
+            theta_method=quadrature.theta_method,
+            theta_n=quadrature.n_theta,
             disk_curvature=disk_curvature,
             disk_factor=disk_factor,
             integral=integral,

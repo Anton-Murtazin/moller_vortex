@@ -256,8 +256,22 @@ def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
     exact_N2 = normalization_constant(exact_packet2)
     exact_impact_b = real_array([0.2, -0.1], shape=(2,))
     exact_quadrature = ExactTimeQuadrature(
+        n_theta=64,
+        n_kappa=5,
+        kappa_method="boole",
+        kappa_n_sigma=10.0,
+    )
+    exact_analytic_quadrature = ExactTimeQuadrature(
         n_theta=8,
         n_kappa=5,
+        theta_method="analytic",
+        kappa_method="boole",
+        kappa_n_sigma=10.0,
+    )
+    exact_reference_quadrature = ExactTimeQuadrature(
+        n_theta=512,
+        n_kappa=5,
+        theta_method="trapezoid",
         kappa_method="boole",
         kappa_n_sigma=10.0,
     )
@@ -314,6 +328,64 @@ def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
             for k3_i, k4_i in zip(exact_k3, exact_k4)
         ]
     )
+    exact_analytic_grid = S_exact_time_grid(
+        exact_k3[:, 0],
+        exact_k3[:, 1],
+        exact_k3[:, 2],
+        exact_k4[:, 0],
+        exact_k4[:, 1],
+        exact_k4[:, 2],
+        exact_packet1,
+        exact_packet2,
+        lam1=0.5,
+        lam2=0.5,
+        lam3=0.5,
+        lam4=0.5,
+        impact_b=exact_impact_b,
+        N1=exact_N1,
+        N2=exact_N2,
+        quadrature=exact_analytic_quadrature,
+        batch_size=2,
+    )
+    exact_analytic_scalar = np.array(
+        [
+            S_exact_time(
+                k3_i,
+                k4_i,
+                exact_packet1,
+                exact_packet2,
+                lam1=0.5,
+                lam2=0.5,
+                lam3=0.5,
+                lam4=0.5,
+                impact_b=exact_impact_b,
+                N1=exact_N1,
+                N2=exact_N2,
+                quadrature=exact_analytic_quadrature,
+                return_details=True,
+            )[0]
+            for k3_i, k4_i in zip(exact_k3, exact_k4)
+        ]
+    )
+    exact_reference_grid = S_exact_time_grid(
+        exact_k3[:, 0],
+        exact_k3[:, 1],
+        exact_k3[:, 2],
+        exact_k4[:, 0],
+        exact_k4[:, 1],
+        exact_k4[:, 2],
+        exact_packet1,
+        exact_packet2,
+        lam1=0.5,
+        lam2=0.5,
+        lam3=0.5,
+        lam4=0.5,
+        impact_b=exact_impact_b,
+        N1=exact_N1,
+        N2=exact_N2,
+        quadrature=exact_reference_quadrature,
+        batch_size=2,
+    )
 
     probability_quadrature = ProbabilityQuadrature(
         k3_perp_range=(0.010, 0.030),
@@ -352,6 +424,14 @@ def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
             exact_grid,
             exact_scalar,
         ),
+        "S exact-time analytic grid vs scalar": _max_relative_grid_error(
+            exact_analytic_grid,
+            exact_analytic_scalar,
+        ),
+        "S exact-time analytic theta vs numeric theta": _max_relative_grid_error(
+            exact_analytic_grid,
+            exact_reference_grid,
+        ),
     }
 
     for s_matrix, s_kwargs in (
@@ -359,7 +439,7 @@ def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
         ("first_order", None),
         (
             "exact_time",
-            {"quadrature": exact_quadrature, "batch_size": 8},
+            {"quadrature": exact_analytic_quadrature, "batch_size": 8},
         ),
     ):
         fast = diff_probability(

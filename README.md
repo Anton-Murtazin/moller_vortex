@@ -108,10 +108,11 @@ mv.exact_time_nodes(exact_quad, radial_interval=(kappa_min, kappa_max))  # kappa
 ```
 
 `S_exact_time` uses only the direct kappa disk formula. `ExactTimeQuadrature`
-stores `n_kappa/kappa_method`, `n_theta/theta_method`, and the optional
-`kappa_n_sigma` cutoff. The scalar diagnostic path passes the physical radial
-interval into `exact_time_nodes(...)`; the vectorized batch path maps the same
-node convention to each point's physical interval internally.
+stores `n_kappa/kappa_method`, `theta_method`, and the optional
+`kappa_n_sigma` cutoff. The default `theta_method="analytic"` uses the closed
+theta integral for `denominator_mode="expanded"`, so `n_theta` is ignored and
+only the kappa quadrature remains. Use `theta_method="trapezoid"` when you want
+the direct numerical angular check or when using `denominator_mode="exact"`.
 
 For probability integrals the finite-axis defaults are composite Boole, so use node counts of the form `n = 4*m + 1`, for example `9`, `17`, or `25`. Periodic angular axes use endpoint-free trapezoid quadrature by default.
 
@@ -155,15 +156,8 @@ $$
 
 against the closed Bessel-K expression;
 2. the Laguerre-derivative formula against the direct finite sum;
-3. analytic transverse expressions against direct numerical polar integration;
-4. vectorized S-matrix/probability paths against scalar diagnostic paths;
-5. closed impulse
-
-$$
-S
-$$
-
-matrix against the same formula with numerical transverse integration.
+3. vectorized S-matrix/probability paths against scalar diagnostic paths;
+4. analytic theta exact-time integration against direct numerical theta quadrature.
 
 ## Structure
 
@@ -173,8 +167,8 @@ src/moller_vortex/
   kinematics.py    vector checks, energies, helicity labels
   packets.py       LGPacket and normalization constants
   amplitudes.py    impulse Moller amplitude
-  transverse.py    analytic and direct numerical transverse integrals
-  smatrix.py       closed, first-order, exact-time and numerical-check S-matrix routines
+  transverse.py    closed transverse integrals
+  smatrix.py       closed, first-order and exact-time S-matrix routines
   checks.py        ordinary check functions for notebooks and scripts
   probability.py   numerical integration of the squared modulus of S matrix related to the transverse total momentum
   quadrature.py    deterministic quadrature rules and central quadrature dataclasses

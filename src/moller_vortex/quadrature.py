@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .constants import HBARC_MEV_NM, real_full, real_zeros
+from .constants import FLOAT_DTYPE, HBARC_MEV_NM, real_full, real_zeros
 
 
 _DEFAULT_SIGMA1_PAR = HBARC_MEV_NM / 5.0
@@ -164,9 +164,11 @@ class ExactTimeQuadrature:
     Parameters
     ----------
     n_theta:
-        Node count for the azimuthal angle.
+        Node count for the azimuthal angle. Ignored when
+        ``theta_method="analytic"``.
     n_kappa, kappa_method, theta_method:
-        Node count and quadrature method names passed to ``nodes_and_weights``.
+        Node count and method names. ``theta_method="analytic"`` evaluates the
+        expanded-denominator theta integral in closed form.
     kappa_n_sigma:
         Integrate only over the transverse Gaussian support, using this many
         effective transverse widths around the Gaussian center. Set to
@@ -181,7 +183,7 @@ class ExactTimeQuadrature:
 
     n_theta: int = 128
     n_kappa: int = 257
-    theta_method: str = "trapezoid"
+    theta_method: str = "analytic"
     kappa_method: str = "boole"
     kappa_n_sigma: float | None = 10.0
 
@@ -388,7 +390,9 @@ def exact_time_nodes(
     Returns
     -------
     tuple
-        Nodes and weights in the order ``radial``, ``theta``.
+        Nodes and weights in the order ``radial``, ``theta``.  For
+        ``theta_method="analytic"``, the theta arrays are empty because no
+        angular quadrature nodes are used.
     """
     if radial_interval is None:
         raise ValueError("radial_interval is required for exact-time kappa nodes.")
@@ -399,10 +403,16 @@ def exact_time_nodes(
         endpoint=False,
     )
 
-    theta = nodes_and_weights(
-        (0.0, 2.0 * np.pi),
-        quadrature.n_theta,
-        method=quadrature.theta_method,
-        endpoint=False,
-    )
+    if quadrature.theta_method == "analytic":
+        theta = (
+            np.array([], dtype=FLOAT_DTYPE),
+            np.array([], dtype=FLOAT_DTYPE),
+        )
+    else:
+        theta = nodes_and_weights(
+            (0.0, 2.0 * np.pi),
+            quadrature.n_theta,
+            method=quadrature.theta_method,
+            endpoint=False,
+        )
     return radial, theta
