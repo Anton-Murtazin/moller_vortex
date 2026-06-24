@@ -286,6 +286,93 @@ $$
 |S_0|^2.
 $$
 
+### `moller_massive_ab(...)`
+
+Returns the massive paraxial spinor numerators \(A\) and \(B\).  This keeps the
+factors \(E_{\mathbf k}\pm m\) and therefore does not make the
+ultrarelativistic \(m\to0\) approximation.
+
+### `moller_amplitude_paraxial_massive_t(...)`
+
+Computes the t-channel dominated paraxial Moller matrix element with the
+massive \(A,B\) numerators and the invariant denominator \((k_1-k_3)^2\).
+This is a plane-wave formula helper for checks.
+
+### `moller_amplitude_paraxial_massive(...)`
+
+Computes the rearranged massive paraxial plane-wave matrix element including
+both t- and u-channel denominators.  It is provided for formula checks.  The
+packet S-matrix routines do not use the full t/u form because the present
+transverse integrations are derived for the t-channel denominator only.
+
+### `matrix_element="paraxial_massive"`
+
+The packet S-matrix supports the paraxial but non-ultrarelativistic t-channel
+matrix element in `S_exact_time(...)` with
+
+```python
+matrix_element="paraxial_massive"
+denominator_mode="minkowski"
+```
+
+In this mode the integrand uses
+
+$$
+\frac{
+(A+4B)\,\delta_{\lambda_3\lambda_1}\delta_{\lambda_4\lambda_2}
+-8B(2\lambda_2)(2\lambda_4)
+\delta_{\lambda_3,-\lambda_2}\delta_{\lambda_4,-\lambda_1}
+}
+{(k_1-k_3)^2}.
+$$
+
+The smooth energy prefactors are evaluated in zeroth-order impulse
+approximation: \(A\), \(B\), and the corresponding numerator scale use the
+incoming packet central energies \(E_1=\varepsilon_1\),
+\(E_2=\varepsilon_2\), together with the external final energies \(E_3\) and
+\(E_4\).  The invariant denominator \((k_1-k_3)^2\) is still evaluated on the
+exact-time roots for each \(q_\perp\), \(\theta\), and \(\xi_\pm\).  The
+reduction
+\((k_1-k_3)^2\to-|\mathbf k_{3\perp}-\mathbf q_\perp|^2\) is not used in this
+mode; it belongs to the ultrarelativistic transverse-denominator
+approximation.
+
+The default remains
+
+```python
+matrix_element="ultrarelativistic"
+```
+
+for backward compatibility.  The `closed` and `first_order` packet formulas
+remain ultrarelativistic-denominator formulas and therefore reject
+`matrix_element="paraxial_massive"`.
+
+In probability calls pass it through `s_matrix_kwargs`:
+
+```python
+w = mv.diff_probability(
+    K_perp,
+    packet1,
+    packet2,
+    quadrature,
+    impact_b=impact_b,
+    N1=N1,
+    N2=N2,
+    s_matrix="exact_time",
+    s_matrix_kwargs={
+        "matrix_element": "paraxial_massive",
+        "denominator_mode": "minkowski",
+        "quadrature": mv.ExactTimeQuadrature(theta_method="trapezoid"),
+        "batch_size": 512,
+    },
+)
+```
+
+For this mode the probability code performs the required spin sum over the
+direct and exchange paraxial helicity channels.  The analytic theta formula is
+not used because the invariant denominator depends on both \(\xi_\pm\) and
+\(\theta\).
+
 ---
 
 ## 7. Transverse integral
@@ -503,9 +590,10 @@ exact_quad = mv.ExactTimeQuadrature(
 )
 ```
 
-This is the default production mode for the expanded Moller denominator.  In
-this mode `n_theta` is ignored. Use direct numerical theta quadrature only for
-diagnostics or for `denominator_mode="exact"`:
+This is the default production mode for the expanded ultrarelativistic Moller
+denominator.  In this mode `n_theta` is ignored. Use direct numerical theta
+quadrature for diagnostics, for `denominator_mode="exact"`, or for the
+massive paraxial matrix element:
 
 ```python
 exact_quad = mv.ExactTimeQuadrature(
@@ -517,9 +605,12 @@ exact_quad = mv.ExactTimeQuadrature(
 )
 ```
 
-The analytic theta formula is available only for
+The analytic theta formula is available only for the ultrarelativistic
 `denominator_mode="expanded"` because it uses the polynomial form of the
-expanded denominator.
+expanded transverse denominator.  The massive paraxial mode must use
+`denominator_mode="minkowski"` with numerical theta quadrature, since the
+integrand contains the invariant \((k_1-k_3)^2\) evaluated at each
+\(\xi_\pm\) root.
 
 The helper `exact_time_nodes(...)` builds kappa and, for numerical theta
 quadrature, theta nodes. The scalar diagnostic path computes the physical

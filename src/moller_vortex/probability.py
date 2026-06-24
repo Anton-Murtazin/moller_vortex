@@ -24,7 +24,7 @@ from .constants import (
     real_array,
     real_empty,
 )
-from .kinematics import vec2
+from .kinematics import helicity, vec2
 from .packets import LGPacket, resolve_normalizations
 from .quadrature import (
     ProbabilityQuadrature,
@@ -103,97 +103,151 @@ def _vectorized_s_abs2_grid(
 
     kwargs = {} if s_matrix_kwargs is None else dict(s_matrix_kwargs)
     kwargs.pop("return_details", None)
+    matrix_element = kwargs.get("matrix_element", "ultrarelativistic")
+    if matrix_element not in ("ultrarelativistic", "paraxial_massive"):
+        raise ValueError(
+            "matrix_element must be 'ultrarelativistic' or 'paraxial_massive'."
+        )
+    if matrix_element == "paraxial_massive" and s_matrix != "exact_time":
+        raise ValueError(
+            "matrix_element='paraxial_massive' is implemented only for "
+            "s_matrix='exact_time' with denominator_mode='minkowski'. The "
+            "closed and first_order probability kernels use the old "
+            "ultrarelativistic transverse denominator."
+        )
     lam1 = helicities[0]
     lam2 = helicities[1]
 
-    if s_matrix == "closed":
-        if kwargs:
-            raise ValueError("s_matrix='closed' does not accept s_matrix_kwargs.")
-        S = S_impulse_closed_grid(
-            k3x,
-            k3y,
-            k3z,
-            k4x,
-            k4y,
-            k4z,
-            packet1,
-            packet2,
-            lam1=lam1,
-            lam2=lam2,
-            lam3=lam1,
-            lam4=lam2,
-            impact_b=impact_b,
-            N1=N1,
-            N2=N2,
-            m=m,
-            e_charge=e_charge,
+    def evaluate_channel(channel_lam1, channel_lam2, channel_lam3, channel_lam4):
+        channel_kwargs = dict(kwargs)
+        if s_matrix == "closed":
+            allowed = {"matrix_element"}
+            if any(key not in allowed for key in channel_kwargs):
+                raise ValueError(
+                    "s_matrix_kwargs for 'closed' may contain only "
+                    "'matrix_element'."
+                )
+            return S_impulse_closed_grid(
+                k3x,
+                k3y,
+                k3z,
+                k4x,
+                k4y,
+                k4z,
+                packet1,
+                packet2,
+                lam1=channel_lam1,
+                lam2=channel_lam2,
+                lam3=channel_lam3,
+                lam4=channel_lam4,
+                impact_b=impact_b,
+                N1=N1,
+                N2=N2,
+                m=m,
+                e_charge=e_charge,
+                **channel_kwargs,
+            )
+
+        if s_matrix == "first_order":
+            allowed = {"time_step", "time_step_scale", "matrix_element"}
+            if any(key not in allowed for key in channel_kwargs):
+                raise ValueError(
+                    "s_matrix_kwargs for 'first_order' may contain only "
+                    "'time_step', 'time_step_scale', and 'matrix_element'."
+                )
+            return S_impulse_first_order_grid(
+                k3x,
+                k3y,
+                k3z,
+                k4x,
+                k4y,
+                k4z,
+                packet1,
+                packet2,
+                lam1=channel_lam1,
+                lam2=channel_lam2,
+                lam3=channel_lam3,
+                lam4=channel_lam4,
+                impact_b=impact_b,
+                N1=N1,
+                N2=N2,
+                m=m,
+                e_charge=e_charge,
+                **channel_kwargs,
+            )
+
+        if s_matrix == "exact_time":
+            allowed = {
+                "quadrature",
+                "denominator_mode",
+                "denominator_regulator",
+                "batch_size",
+                "matrix_element",
+            }
+            if any(key not in allowed for key in channel_kwargs):
+                raise ValueError(
+                    "s_matrix_kwargs for 'exact_time' may contain only "
+                    "'quadrature', 'denominator_mode', 'denominator_regulator', "
+                    "'batch_size', and 'matrix_element'."
+                )
+            if channel_kwargs.get("batch_size") is None:
+                channel_kwargs.pop("batch_size", None)
+            return S_exact_time_grid(
+                k3x,
+                k3y,
+                k3z,
+                k4x,
+                k4y,
+                k4z,
+                packet1,
+                packet2,
+                lam1=channel_lam1,
+                lam2=channel_lam2,
+                lam3=channel_lam3,
+                lam4=channel_lam4,
+                impact_b=impact_b,
+                N1=N1,
+                N2=N2,
+                m=m,
+                e_charge=e_charge,
+                **channel_kwargs,
+            )
+
+        raise ValueError("s_matrix must be 'closed', 'first_order', or 'exact_time'.")
+
+    if matrix_element == "paraxial_massive":
+        h0 = helicity(helicities[0])
+        h1 = helicity(helicities[1])
+        if h0 != -h1:
+            raise ValueError("spin averaging expects the two helicities +0.5 and -0.5.")
+
+        same_h0_direct = evaluate_channel(h0, h0, h0, h0)
+        same_h0_exchange = evaluate_channel(h0, h0, h1, h1)
+        same_h1_direct = evaluate_channel(h1, h1, h1, h1)
+        same_h1_exchange = evaluate_channel(h1, h1, h0, h0)
+
+        opposite_h0_h1 = evaluate_channel(h0, h1, h0, h1)
+        opposite_h1_h0 = evaluate_channel(h1, h0, h1, h0)
+
+        return 0.25 * (
+            np.abs(same_h0_direct) ** 2
+            + np.abs(same_h0_exchange) ** 2
+            + np.abs(same_h1_direct) ** 2
+            + np.abs(same_h1_exchange) ** 2
+            + np.abs(opposite_h0_h1) ** 2
+            + np.abs(opposite_h1_h0) ** 2
         )
+
+    if s_matrix == "closed":
+        S = evaluate_channel(lam1, lam2, lam1, lam2)
         return np.abs(S) ** 2
 
     if s_matrix == "first_order":
-        allowed = {"time_step", "time_step_scale"}
-        if any(key not in allowed for key in kwargs):
-            raise ValueError(
-                "s_matrix_kwargs for 'first_order' may contain only "
-                "'time_step' and 'time_step_scale'."
-            )
-        S = S_impulse_first_order_grid(
-            k3x,
-            k3y,
-            k3z,
-            k4x,
-            k4y,
-            k4z,
-            packet1,
-            packet2,
-            lam1=lam1,
-            lam2=lam2,
-            lam3=lam1,
-            lam4=lam2,
-            impact_b=impact_b,
-            N1=N1,
-            N2=N2,
-            m=m,
-            e_charge=e_charge,
-            **kwargs,
-        )
+        S = evaluate_channel(lam1, lam2, lam1, lam2)
         return np.abs(S) ** 2
 
     if s_matrix == "exact_time":
-        allowed = {
-            "quadrature",
-            "denominator_mode",
-            "denominator_regulator",
-            "batch_size",
-        }
-        if any(key not in allowed for key in kwargs):
-            raise ValueError(
-                "s_matrix_kwargs for 'exact_time' may contain only "
-                "'quadrature', 'denominator_mode', 'denominator_regulator', "
-                "and 'batch_size'."
-            )
-        if kwargs.get("batch_size") is None:
-            kwargs.pop("batch_size", None)
-        S = S_exact_time_grid(
-            k3x,
-            k3y,
-            k3z,
-            k4x,
-            k4y,
-            k4z,
-            packet1,
-            packet2,
-            lam1=lam1,
-            lam2=lam2,
-            lam3=lam1,
-            lam4=lam2,
-            impact_b=impact_b,
-            N1=N1,
-            N2=N2,
-            m=m,
-            e_charge=e_charge,
-            **kwargs,
-        )
+        S = evaluate_channel(lam1, lam2, lam1, lam2)
         return np.abs(S) ** 2
 
     raise ValueError("s_matrix must be 'closed', 'first_order', or 'exact_time'.")

@@ -80,6 +80,40 @@ S = mv.S_impulse_closed_form(
 
 For a one-off calculation, `N1` and `N2` may be omitted; the S-matrix functions will compute them internally. For scans, compute them explicitly and reuse them.
 
+To use the paraxial but non-ultrarelativistic t-channel matrix element, use
+the exact-time S-matrix with the full Minkowski denominator:
+
+```python
+exact_quad = mv.ExactTimeQuadrature(
+    n_theta=128,
+    n_kappa=257,
+    theta_method="trapezoid",
+)
+
+S = mv.S_exact_time(
+    k3,
+    k4,
+    packet1,
+    packet2,
+    lam1=0.5,
+    lam2=-0.5,
+    lam3=0.5,
+    lam4=-0.5,
+    impact_b=impact_b,
+    N1=N1,
+    N2=N2,
+    quadrature=exact_quad,
+    denominator_mode="minkowski",
+    matrix_element="paraxial_massive",
+)
+```
+
+For probability routines, use `s_matrix="exact_time"` and pass the same options
+through `s_matrix_kwargs`. The default `matrix_element="ultrarelativistic"` is
+kept for backward compatibility. In this mode the smooth energy prefactors are
+evaluated at the incoming packet central energies and external final energies;
+the invariant denominator is evaluated on the exact-time roots.
+
 ## Central numerical settings
 
 The standard normalization call uses the built-in adaptive `quad` settings:
@@ -112,7 +146,9 @@ stores `n_kappa/kappa_method`, `theta_method`, and the optional
 `kappa_n_sigma` cutoff. The default `theta_method="analytic"` uses the closed
 theta integral for `denominator_mode="expanded"`, so `n_theta` is ignored and
 only the kappa quadrature remains. Use `theta_method="trapezoid"` when you want
-the direct numerical angular check or when using `denominator_mode="exact"`.
+the direct numerical angular check, when using `denominator_mode="exact"`, or
+when using `matrix_element="paraxial_massive"` with
+`denominator_mode="minkowski"`.
 
 For probability integrals the finite-axis defaults are composite Boole, so use node counts of the form `n = 4*m + 1`, for example `9`, `17`, or `25`. Periodic angular axes use endpoint-free trapezoid quadrature by default.
 

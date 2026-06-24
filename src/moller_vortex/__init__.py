@@ -8,9 +8,16 @@ that notebooks can use
 and access the main functions as ``mv.function_name``.
 """
 
-from .amplitudes import moller_amplitude_impulse
+from .amplitudes import (
+    moller_amplitude_impulse,
+    moller_amplitude_paraxial_massive,
+    moller_amplitude_paraxial_massive_t,
+    moller_massive_ab,
+    moller_paraxial_massive_t_scale,
+)
 from .checks import (
     check_laguerre_derivative,
+    check_massive_ur_limit,
     check_normalization,
     check_vectorized_paths,
     run_all_checks,
@@ -116,6 +123,7 @@ __all__ = [
     "boole_nodes_and_weights",
     "central_energy",
     "check_laguerre_derivative",
+    "check_massive_ur_limit",
     "check_normalization",
     "check_vectorized_paths",
     "complex_array",
@@ -134,6 +142,10 @@ __all__ = [
     "longitudinal_density",
     "longitudinal_density_grid",
     "moller_amplitude_impulse",
+    "moller_amplitude_paraxial_massive",
+    "moller_amplitude_paraxial_massive_t",
+    "moller_massive_ab",
+    "moller_paraxial_massive_t_scale",
     "nodes_and_weights",
     "normalization_constant",
     "probability_inner_nodes",

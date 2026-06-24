@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .constants import HBARC_MEV_NM, real_array
+from .constants import HBARC_MEV_NM, real_array, spatial_width_nm_to_momentum_mev
 from .kinematics import relative_error
 from .packets import LGPacket, normalization_constant, spherical_normalization_constant
 from .quadrature import ExactTimeQuadrature, ProbabilityQuadrature
@@ -268,6 +268,13 @@ def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
         kappa_method="boole",
         kappa_n_sigma=10.0,
     )
+    exact_massive_quadrature = ExactTimeQuadrature(
+        n_theta=16,
+        n_kappa=5,
+        theta_method="trapezoid",
+        kappa_method="boole",
+        kappa_n_sigma=10.0,
+    )
     exact_reference_quadrature = ExactTimeQuadrature(
         n_theta=512,
         n_kappa=5,
@@ -367,6 +374,49 @@ def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
             for k3_i, k4_i in zip(exact_k3, exact_k4)
         ]
     )
+    exact_massive_grid = S_exact_time_grid(
+        exact_k3[:, 0],
+        exact_k3[:, 1],
+        exact_k3[:, 2],
+        exact_k4[:, 0],
+        exact_k4[:, 1],
+        exact_k4[:, 2],
+        exact_packet1,
+        exact_packet2,
+        lam1=0.5,
+        lam2=-0.5,
+        lam3=0.5,
+        lam4=-0.5,
+        impact_b=exact_impact_b,
+        N1=exact_N1,
+        N2=exact_N2,
+        quadrature=exact_massive_quadrature,
+        denominator_mode="minkowski",
+        batch_size=2,
+        matrix_element="paraxial_massive",
+    )
+    exact_massive_scalar = np.array(
+        [
+            S_exact_time(
+                k3_i,
+                k4_i,
+                exact_packet1,
+                exact_packet2,
+                lam1=0.5,
+                lam2=-0.5,
+                lam3=0.5,
+                lam4=-0.5,
+                impact_b=exact_impact_b,
+                N1=exact_N1,
+                N2=exact_N2,
+                quadrature=exact_massive_quadrature,
+                denominator_mode="minkowski",
+                matrix_element="paraxial_massive",
+                return_details=True,
+            )[0]
+            for k3_i, k4_i in zip(exact_k3, exact_k4)
+        ]
+    )
     exact_reference_grid = S_exact_time_grid(
         exact_k3[:, 0],
         exact_k3[:, 1],
@@ -428,18 +478,33 @@ def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
             exact_analytic_grid,
             exact_analytic_scalar,
         ),
+        "S exact-time massive grid vs scalar": _max_relative_grid_error(
+            exact_massive_grid,
+            exact_massive_scalar,
+        ),
         "S exact-time analytic theta vs numeric theta": _max_relative_grid_error(
             exact_analytic_grid,
             exact_reference_grid,
         ),
     }
 
-    for s_matrix, s_kwargs in (
-        ("closed", None),
-        ("first_order", None),
+    for label, s_matrix, s_kwargs in (
+        ("closed", "closed", None),
+        ("first_order", "first_order", None),
         (
             "exact_time",
+            "exact_time",
             {"quadrature": exact_analytic_quadrature, "batch_size": 8},
+        ),
+        (
+            "exact_time massive",
+            "exact_time",
+            {
+                "matrix_element": "paraxial_massive",
+                "denominator_mode": "minkowski",
+                "quadrature": exact_massive_quadrature,
+                "batch_size": 4,
+            },
         ),
     ):
         fast = diff_probability(
@@ -455,13 +520,101 @@ def check_vectorized_paths(verbose: bool = True) -> dict[str, float]:
             s_matrix_kwargs=s_kwargs,
             **probability_kwargs,
         )[0, 0]
-        errors[f"probability {s_matrix} grid vs point"] = relative_error(
+        errors[f"probability {label} grid vs point"] = relative_error(
             grid,
             fast,
         )
 
     if verbose:
         _print_errors("Vectorized-path errors", errors)
+
+    return errors
+
+
+def check_massive_ur_limit(verbose: bool = True) -> dict[str, float]:
+    """Return errors for the massive exact-time branch in the UR limit.
+
+    The paraxial massive t-channel matrix element must reduce to the old
+    ultrarelativistic impulse result at large longitudinal momentum.  This
+    check uses Gauss-Legendre radial nodes; low-order Boole rules can be far
+    from converged for this exact-time radial integral.
+    """
+    p = 1000.0
+    packet1 = LGPacket(
+        ell=5,
+        sigma_perp=spatial_width_nm_to_momentum_mev(10.0),
+        sigma_par=spatial_width_nm_to_momentum_mev(5.0),
+        kbar_z=p,
+    )
+    packet2 = LGPacket(
+        ell=0,
+        sigma_perp=spatial_width_nm_to_momentum_mev(2.0),
+        sigma_par=spatial_width_nm_to_momentum_mev(1.0),
+        kbar_z=-p,
+    )
+    N1 = normalization_constant(packet1)
+    N2 = normalization_constant(packet2)
+    impact_b = real_array([5.0 / HBARC_MEV_NM, 0.0], shape=(2,))
+
+    rho = 0.030
+    phi = 0.7
+    K_perp = real_array([5.0e-5, -5.0e-5], shape=(2,))
+    k3_perp = real_array([rho * np.cos(phi), rho * np.sin(phi)], shape=(2,))
+    k4_perp = K_perp - k3_perp
+    k3 = real_array([k3_perp[0], k3_perp[1], p], shape=(3,))
+    k4 = real_array([k4_perp[0], k4_perp[1], -p], shape=(3,))
+
+    kwargs = dict(
+        k3=k3,
+        k4=k4,
+        packet1=packet1,
+        packet2=packet2,
+        lam1=-0.5,
+        lam2=0.5,
+        lam3=-0.5,
+        lam4=0.5,
+        impact_b=impact_b,
+        N1=N1,
+        N2=N2,
+    )
+    exact_quadrature = ExactTimeQuadrature(
+        n_theta=64,
+        n_kappa=33,
+        theta_method="trapezoid",
+        kappa_method="legendre",
+        kappa_n_sigma=10.0,
+    )
+
+    closed = S_impulse_closed_form(**kwargs)
+    exact_expanded = S_exact_time(
+        **kwargs,
+        quadrature=exact_quadrature,
+        denominator_mode="expanded",
+    )
+    exact_massive = S_exact_time(
+        **kwargs,
+        quadrature=exact_quadrature,
+        denominator_mode="minkowski",
+        matrix_element="paraxial_massive",
+    )
+
+    errors = {
+        "UR exact-time vs closed impulse": relative_error(
+            exact_expanded,
+            closed,
+        ),
+        "massive exact-time vs closed impulse": relative_error(
+            exact_massive,
+            closed,
+        ),
+        "massive exact-time vs UR exact-time": relative_error(
+            exact_massive,
+            exact_expanded,
+        ),
+    }
+
+    if verbose:
+        _print_errors("Massive-UR-limit errors", errors)
 
     return errors
 
@@ -489,6 +642,9 @@ def run_all_checks(
             verbose=verbose,
         ),
         "vectorized_paths": check_vectorized_paths(
+            verbose=verbose,
+        ),
+        "massive_ur_limit": check_massive_ur_limit(
             verbose=verbose,
         ),
     }

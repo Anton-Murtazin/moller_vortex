@@ -9,6 +9,7 @@ from functools import lru_cache
 import numpy as np
 from scipy.special import ive
 
+from .amplitudes import moller_paraxial_massive_t_scale
 from .constants import (
     COMPLEX_DTYPE,
     ELECTRON_CHARGE,
@@ -61,11 +62,12 @@ def _packet_denominator(packet1: LGPacket, packet2: LGPacket) -> float:
     """
     L1 = abs(packet1.ell)
     L2 = abs(packet2.ell)
-    return (
-        packet1.sigma_perp ** L1
-        * packet2.sigma_perp ** L2
-        * np.sqrt(math.factorial(L1) * math.factorial(L2))
+    log_denominator = (
+        L1 * math.log(packet1.sigma_perp)
+        + L2 * math.log(packet2.sigma_perp)
+        + 0.5 * (math.lgamma(L1 + 1) + math.lgamma(L2 + 1))
     )
+    return math.exp(log_denominator)
 
 
 def _mode(value: str, allowed: tuple[str, ...], name: str) -> str:
@@ -89,6 +91,40 @@ def _mode(value: str, allowed: tuple[str, ...], name: str) -> str:
         allowed_text = ", ".join(repr(item) for item in allowed)
         raise ValueError(f"{name} must be one of {allowed_text}.")
     return value
+
+
+def _matrix_element_scale(
+    matrix_element: str,
+    E1,
+    E2,
+    E3,
+    E4,
+    lam1: float,
+    lam2: float,
+    lam3: float,
+    lam4: float,
+    m: float,
+):
+    """Return the t-channel numerator scale relative to the old UR element."""
+    matrix_element = _mode(
+        matrix_element,
+        ("ultrarelativistic", "paraxial_massive"),
+        "matrix_element",
+    )
+    if matrix_element == "ultrarelativistic":
+        return 1.0 if _helicity_conserving(lam1, lam2, lam3, lam4) else 0.0
+
+    return moller_paraxial_massive_t_scale(
+        E1,
+        E2,
+        E3,
+        E4,
+        lam1,
+        lam2,
+        lam3,
+        lam4,
+        m=m,
+    )
 
 
 @dataclass(frozen=True)
@@ -241,6 +277,7 @@ def S_impulse_common_factor(
     impact_b=(0.0, 0.0),
     N1: float | None = None,
     N2: float | None = None,
+    matrix_element: str = "ultrarelativistic",
 ) -> tuple[complex, dict]:
     """Return the common prefactor outside the transverse integral.
 
@@ -266,9 +303,13 @@ def S_impulse_common_factor(
     """
     packet1 = packet1.checked()
     packet2 = packet2.checked()
-
-    if not _helicity_conserving(lam1, lam2, lam3, lam4):
-        return complex_zero(), {"reason": "helicity delta is zero"}
+    if matrix_element == "paraxial_massive":
+        raise ValueError(
+            "matrix_element='paraxial_massive' is implemented for "
+            "S_exact_time with denominator_mode='minkowski'. The closed and "
+            "first-order impulse formulas use the ultrarelativistic "
+            "transverse t-channel denominator."
+        )
 
     b = vec2(impact_b)
     N1, N2 = resolve_normalizations(
@@ -280,6 +321,20 @@ def S_impulse_common_factor(
     )
 
     pars = impulse_parameters(packet1, packet2, k3, k4, b, m)
+    matrix_scale = _matrix_element_scale(
+        matrix_element,
+        pars["eps1"],
+        pars["eps2"],
+        pars["E3"],
+        pars["E4"],
+        lam1,
+        lam2,
+        lam3,
+        lam4,
+        m,
+    )
+    if np.all(matrix_scale == 0.0):
+        return complex_zero(), {"reason": "matrix element helicity factor is zero"}
 
     # This common factor is before the transverse integral; the transverse
     # routines already include the angular 2*pi from d^2q.
@@ -291,6 +346,7 @@ def S_impulse_common_factor(
         * N1
         * N2
         / _packet_denominator(packet1, packet2)
+        * matrix_scale
     )
 
     longitudinal_factor = (
@@ -310,6 +366,8 @@ def S_impulse_common_factor(
             prefactor=prefactor,
             longitudinal_factor=longitudinal_factor,
             common_factor=common_factor,
+            matrix_element=matrix_element,
+            matrix_element_scale=matrix_scale,
         )
     )
 
@@ -402,16 +460,18 @@ def _S_impulse_common_factor_grid(
     impact_b=(0.0, 0.0),
     N1: float | None = None,
     N2: float | None = None,
+    matrix_element: str = "ultrarelativistic",
 ) -> tuple[np.ndarray, dict]:
     """Return the vectorized impulse prefactor outside transverse integrals."""
-    if not _helicity_conserving(lam1, lam2, lam3, lam4):
-        shape = np.broadcast(k3x, k3y, k3z, k4x, k4y, k4z).shape
-        return np.zeros(shape, dtype=COMPLEX_DTYPE), {
-            "reason": "helicity delta is zero"
-        }
-
     packet1 = packet1.checked()
     packet2 = packet2.checked()
+    if matrix_element == "paraxial_massive":
+        raise ValueError(
+            "matrix_element='paraxial_massive' is implemented for "
+            "S_exact_time_grid with denominator_mode='minkowski'. The closed "
+            "and first-order impulse formulas use the ultrarelativistic "
+            "transverse t-channel denominator."
+        )
     b = vec2(impact_b)
     N1, N2 = resolve_normalizations(
         packet1,
@@ -433,6 +493,23 @@ def _S_impulse_common_factor_grid(
         impact_b=b,
         m=m,
     )
+    matrix_scale = _matrix_element_scale(
+        matrix_element,
+        pars["eps1"],
+        pars["eps2"],
+        pars["E3"],
+        pars["E4"],
+        lam1,
+        lam2,
+        lam3,
+        lam4,
+        m,
+    )
+    if np.all(matrix_scale == 0.0):
+        shape = np.broadcast(k3x, k3y, k3z, k4x, k4y, k4z).shape
+        return np.zeros(shape, dtype=COMPLEX_DTYPE), {
+            "reason": "matrix element helicity factor is zero"
+        }
 
     prefactor = (
         -1j
@@ -442,6 +519,7 @@ def _S_impulse_common_factor_grid(
         * N1
         * N2
         / _packet_denominator(packet1, packet2)
+        * matrix_scale
     )
     longitudinal_factor = (
         1.0
@@ -458,6 +536,8 @@ def _S_impulse_common_factor_grid(
             prefactor=prefactor,
             longitudinal_factor=longitudinal_factor,
             common_factor=common_factor,
+            matrix_element=matrix_element,
+            matrix_element_scale=matrix_scale,
         )
     )
     return common_factor, details
@@ -477,6 +557,7 @@ def S_impulse_closed_form(
     impact_b=(0.0, 0.0),
     N1: float | None = None,
     N2: float | None = None,
+    matrix_element: str = "ultrarelativistic",
     return_details: bool = False,
 ) -> complex | tuple[complex, dict]:
     """Compute the closed impulse S-matrix with analytic transverse integral.
@@ -517,6 +598,7 @@ def S_impulse_closed_form(
         impact_b=impact_b,
         N1=N1,
         N2=N2,
+        matrix_element=matrix_element,
     )
 
     if "reason" in details:
@@ -564,6 +646,7 @@ def S_impulse_closed_grid(
     impact_b=(0.0, 0.0),
     N1: float | None = None,
     N2: float | None = None,
+    matrix_element: str = "ultrarelativistic",
 ):
     """Vectorized closed impulse S matrix for broadcastable momenta."""
     common_factor, details = _S_impulse_common_factor_grid(
@@ -584,6 +667,7 @@ def S_impulse_closed_grid(
         impact_b=impact_b,
         N1=N1,
         N2=N2,
+        matrix_element=matrix_element,
     )
     if "reason" in details:
         return common_factor
@@ -757,7 +841,10 @@ def _first_order_time_block(
     Returns
     -------
     tuple[complex, dict]
-        Time block and intermediate diagnostic values.
+        Time block without the scalar longitudinal exponential and
+        intermediate diagnostic values.  The caller combines
+        ``longitudinal_exponent`` with the remaining Gaussian exponent before
+        exponentiating; this avoids overflow from cancelling exponentials.
     """
     Omega = longitudinal.Omega
     a_long = longitudinal.a
@@ -771,12 +858,7 @@ def _first_order_time_block(
         -d_long * Omega / c_long
     )
 
-    longitudinal_factor = (
-        2.0
-        * np.sqrt(np.pi)
-        / c_long
-        * np.exp(longitudinal_exponent)
-    )
+    longitudinal_factor = 2.0 * np.sqrt(np.pi) / c_long
 
     q_time = (
         2.0 * b_long * Omega / c2
@@ -820,6 +902,7 @@ def S_impulse_first_order(
     N2: float | None = None,
     time_step: float | None = None,
     time_step_scale: float = 1.0e-4,
+    matrix_element: str = "ultrarelativistic",
     return_details: bool = False,
 ) -> complex | tuple[complex, dict]:
     """S-matrix beyond strict impulse approximation.
@@ -861,6 +944,7 @@ def S_impulse_first_order(
         impact_b=impact_b,
         N1=N1,
         N2=N2,
+        matrix_element=matrix_element,
     )
 
     if "reason" in details:
@@ -932,10 +1016,13 @@ def S_impulse_first_order(
         )
     )
 
-    base_factor = (
-        details["prefactor"]
-        / (2.0 * np.sqrt(np.pi))
-        * np.exp(details["Xi0"] + xi0_localization)
+    combined_exponent = (
+        details["Xi0"]
+        + xi0_localization
+        + time_details["longitudinal_exponent"]
+    )
+    base_factor = details["prefactor"] / (2.0 * np.sqrt(np.pi)) * np.exp(
+        combined_exponent
     )
 
     S = base_factor * time_block
@@ -955,6 +1042,7 @@ def S_impulse_first_order(
                 I1=I1,
                 I2=I2,
                 time_block=time_block,
+                combined_exponent=combined_exponent,
                 base_factor=base_factor,
                 S_first_order=S,
                 **time_details,
@@ -985,6 +1073,7 @@ def S_impulse_first_order_grid(
     N2: float | None = None,
     time_step: float | None = None,
     time_step_scale: float = 1.0e-4,
+    matrix_element: str = "ultrarelativistic",
 ):
     """Vectorized first-order impulse S matrix for broadcastable momenta."""
     common_factor, details = _S_impulse_common_factor_grid(
@@ -1005,6 +1094,7 @@ def S_impulse_first_order_grid(
         impact_b=impact_b,
         N1=N1,
         N2=N2,
+        matrix_element=matrix_element,
     )
     if "reason" in details:
         return common_factor
@@ -1039,7 +1129,7 @@ def S_impulse_first_order_grid(
         for multiplier in (-2.0, -1.0, 0.0, 1.0, 2.0)
     )
     I0, I1, I2 = _five_point_time_derivatives(samples, time_step)
-    time_block, _ = _first_order_time_block(longitudinal, I0, I1, I2)
+    time_block, time_details = _first_order_time_block(longitudinal, I0, I1, I2)
 
     xi0_localization = -longitudinal.delta_kz * longitudinal.delta_kz / (
         2.0
@@ -1048,10 +1138,13 @@ def S_impulse_first_order_grid(
         * longitudinal.gamma2
         * longitudinal.gamma2
     )
-    base_factor = (
-        details["prefactor"]
-        / (2.0 * np.sqrt(np.pi))
-        * np.exp(details["Xi0"] + xi0_localization)
+    combined_exponent = (
+        details["Xi0"]
+        + xi0_localization
+        + time_details["longitudinal_exponent"]
+    )
+    base_factor = details["prefactor"] / (2.0 * np.sqrt(np.pi)) * np.exp(
+        combined_exponent
     )
     return base_factor * time_block
 
@@ -1094,14 +1187,20 @@ def _exact_time_A_perp_grid(
     *,
     Kx,
     Ky,
+    packet1_kbar_z,
     k3x,
     k3y,
+    k3z,
+    E3,
     k3_perp_sq,
     b_perp,
     s1p: float,
     s2p: float,
     ell1: int,
     ell2: int,
+    xi=None,
+    m: float = ELECTRON_MASS,
+    matrix_element: str,
     denominator_mode: str,
     denominator_regulator: float,
 ):
@@ -1109,12 +1208,32 @@ def _exact_time_A_perp_grid(
     K_minus_qx = Kx - qx
     K_minus_qy = Ky - qy
 
-    if denominator_mode == "expanded":
+    if matrix_element == "paraxial_massive":
+        if xi is None:
+            raise ValueError("xi must be provided for the massive paraxial denominator.")
+        k1z = packet1_kbar_z + xi
+        q_sq = qx * qx + qy * qy
+        E1_internal = np.sqrt(m * m + q_sq + k1z * k1z)
+        diff_x = k3x - qx
+        diff_y = k3y - qy
+        diff_z = k3z - k1z
+        t_channel = (
+            (E1_internal - E3) * (E1_internal - E3)
+            - diff_x * diff_x
+            - diff_y * diff_y
+            - diff_z * diff_z
+        )
+        denominator_factor = -1.0 / (
+            t_channel - denominator_regulator * denominator_regulator
+        )
+        matrix_denominator_factor = denominator_factor
+    elif denominator_mode == "expanded":
         denominator_factor = (
             1.0
             / k3_perp_sq
             * (1.0 + 2.0 * (qx * k3x + qy * k3y) / k3_perp_sq)
         )
+        matrix_denominator_factor = denominator_factor
     else:
         diff_x = k3x - qx
         diff_y = k3y - qy
@@ -1123,6 +1242,7 @@ def _exact_time_A_perp_grid(
             + diff_y * diff_y
             + denominator_regulator * denominator_regulator
         )
+        matrix_denominator_factor = denominator_factor
 
     q_sq = qx * qx + qy * qy
     K_minus_q_sq = K_minus_qx * K_minus_qx + K_minus_qy * K_minus_qy
@@ -1135,7 +1255,7 @@ def _exact_time_A_perp_grid(
     z1 = qx + 1j * qy
     z2 = K_minus_qx + 1j * K_minus_qy
     vortex_factor = _vortex_monomial_z(z1, ell1) * _vortex_monomial_z(z2, ell2)
-    return denominator_factor * transverse_exp * vortex_factor
+    return matrix_denominator_factor * transverse_exp * vortex_factor
 
 
 def _angular_kernels_with_exponent(min_m: int, max_m: int, u, v, C_perp):
@@ -1317,6 +1437,7 @@ def S_exact_time_grid(
     quadrature: ExactTimeQuadrature | None = None,
     denominator_mode: str = "expanded",
     denominator_regulator: float = 0.0,
+    matrix_element: str = "ultrarelativistic",
     batch_size: int = 32,
 ):
     """Vectorized exact-time S matrix on broadcastable momentum grids.
@@ -1331,7 +1452,7 @@ def S_exact_time_grid(
     quadrature = ExactTimeQuadrature() if quadrature is None else quadrature
     denominator_mode = _mode(
         denominator_mode,
-        ("expanded", "exact"),
+        ("expanded", "exact", "minkowski"),
         "denominator_mode",
     )
     analytic_theta = quadrature.theta_method == "analytic"
@@ -1340,6 +1461,24 @@ def S_exact_time_grid(
             "theta_method='analytic' is implemented only for "
             "denominator_mode='expanded'."
         )
+    if matrix_element == "paraxial_massive":
+        if denominator_mode != "minkowski":
+            raise ValueError(
+                "matrix_element='paraxial_massive' requires "
+                "denominator_mode='minkowski'; the transverse-only "
+                "'expanded' and 'exact' denominators are ultrarelativistic."
+            )
+        if analytic_theta:
+            raise ValueError(
+                "matrix_element='paraxial_massive' requires numerical theta "
+                "quadrature because (k1-k3)^2 depends on xi and theta. Use "
+                "ExactTimeQuadrature(theta_method='trapezoid')."
+            )
+    elif denominator_mode == "minkowski":
+        raise ValueError(
+            "denominator_mode='minkowski' is defined only for "
+            "matrix_element='paraxial_massive'."
+        )
     batch_size = int(batch_size)
     if batch_size <= 0:
         raise ValueError("batch_size must be positive.")
@@ -1347,9 +1486,6 @@ def S_exact_time_grid(
     arrays = np.broadcast_arrays(k3x, k3y, k3z, k4x, k4y, k4z)
     shape = arrays[0].shape
     out = np.zeros(shape, dtype=COMPLEX_DTYPE)
-
-    if not _helicity_conserving(lam1, lam2, lam3, lam4):
-        return out
 
     k3x_f, k3y_f, k3z_f, k4x_f, k4y_f, k4z_f = (
         np.ravel(np.asarray(arr, dtype=FLOAT_DTYPE)) for arr in arrays
@@ -1372,6 +1508,21 @@ def S_exact_time_grid(
 
     eps1 = central_energy(packet1, m)
     eps2 = central_energy(packet2, m)
+    matrix_scale = _matrix_element_scale(
+        matrix_element,
+        eps1,
+        eps2,
+        E3,
+        E4,
+        lam1,
+        lam2,
+        lam3,
+        lam4,
+        m,
+    )
+    if np.all(matrix_scale == 0.0):
+        return out
+
     gamma1 = eps1 / m
     gamma2 = eps2 / m
     v1 = packet1.kbar_z / eps1
@@ -1451,6 +1602,7 @@ def S_exact_time_grid(
         * N1
         * N2
         / _packet_denominator(packet1, packet2)
+        * matrix_scale
     )
 
     if not analytic_theta:
@@ -1506,12 +1658,16 @@ def S_exact_time_grid(
         sqrt_D = sqrt_Delta0[idx].reshape(bshape)
         C = C_z[idx].reshape(bshape)
         D = D_z[idx].reshape(bshape)
+        longitudinal_exp = longitudinal_exp_arg[idx].reshape(bshape)
         xi_plus = (-C + sqrt_D * sqrt_factor) / (2.0 * A_z)
         xi_minus = (-C - sqrt_D * sqrt_factor) / (2.0 * A_z)
-        root_weight = (
-            np.exp(-B_z * xi_plus * xi_plus + D * xi_plus)
-            + np.exp(-B_z * xi_minus * xi_minus + D * xi_minus)
+        root_weight_plus = np.exp(
+            longitudinal_exp - B_z * xi_plus * xi_plus + D * xi_plus
         )
+        root_weight_minus = np.exp(
+            longitudinal_exp - B_z * xi_minus * xi_minus + D * xi_minus
+        )
+        root_weight = root_weight_plus + root_weight_minus
 
         if analytic_theta:
             kappa_2d = kappa_nodes[:, :, 0]
@@ -1547,36 +1703,84 @@ def S_exact_time_grid(
         else:
             qx = q0x[idx].reshape(bshape) + kappa_nodes * cos_theta
             qy = q0y[idx].reshape(bshape) + kappa_nodes * sin_theta
-            weights = (
-                kappa_weights
-                * theta_weights
-                * kappa_nodes
-                / sqrt_factor
-                * root_weight
-                * valid
-            )
+            weights = kappa_weights * theta_weights * kappa_nodes / sqrt_factor * valid
 
-            A_perp = _exact_time_A_perp_grid(
-                qx,
-                qy,
-                Kx=Kx[idx].reshape(bshape),
-                Ky=Ky[idx].reshape(bshape),
-                k3x=k3x_f[idx].reshape(bshape),
-                k3y=k3y_f[idx].reshape(bshape),
-                k3_perp_sq=k3_perp_sq[idx].reshape(bshape),
-                b_perp=b_perp,
-                s1p=s1p,
-                s2p=s2p,
-                ell1=packet1.ell,
-                ell2=packet2.ell,
-                denominator_mode=denominator_mode,
-                denominator_regulator=denominator_regulator,
-            )
-            integral = np.sum(weights * A_perp, axis=(1, 2))
+            if matrix_element == "paraxial_massive":
+                A_perp_plus = _exact_time_A_perp_grid(
+                    qx,
+                    qy,
+                    Kx=Kx[idx].reshape(bshape),
+                    Ky=Ky[idx].reshape(bshape),
+                    packet1_kbar_z=packet1.kbar_z,
+                    k3x=k3x_f[idx].reshape(bshape),
+                    k3y=k3y_f[idx].reshape(bshape),
+                    k3z=k3z_f[idx].reshape(bshape),
+                    E3=E3[idx].reshape(bshape),
+                    k3_perp_sq=k3_perp_sq[idx].reshape(bshape),
+                    b_perp=b_perp,
+                    s1p=s1p,
+                    s2p=s2p,
+                    ell1=packet1.ell,
+                    ell2=packet2.ell,
+                    xi=xi_plus,
+                    m=m,
+                    matrix_element=matrix_element,
+                    denominator_mode=denominator_mode,
+                    denominator_regulator=denominator_regulator,
+                )
+                A_perp_minus = _exact_time_A_perp_grid(
+                    qx,
+                    qy,
+                    Kx=Kx[idx].reshape(bshape),
+                    Ky=Ky[idx].reshape(bshape),
+                    packet1_kbar_z=packet1.kbar_z,
+                    k3x=k3x_f[idx].reshape(bshape),
+                    k3y=k3y_f[idx].reshape(bshape),
+                    k3z=k3z_f[idx].reshape(bshape),
+                    E3=E3[idx].reshape(bshape),
+                    k3_perp_sq=k3_perp_sq[idx].reshape(bshape),
+                    b_perp=b_perp,
+                    s1p=s1p,
+                    s2p=s2p,
+                    ell1=packet1.ell,
+                    ell2=packet2.ell,
+                    xi=xi_minus,
+                    m=m,
+                    matrix_element=matrix_element,
+                    denominator_mode=denominator_mode,
+                    denominator_regulator=denominator_regulator,
+                )
+                root_integrand = (
+                    root_weight_plus * A_perp_plus
+                    + root_weight_minus * A_perp_minus
+                )
+            else:
+                A_perp = _exact_time_A_perp_grid(
+                    qx,
+                    qy,
+                    Kx=Kx[idx].reshape(bshape),
+                    Ky=Ky[idx].reshape(bshape),
+                    packet1_kbar_z=packet1.kbar_z,
+                    k3x=k3x_f[idx].reshape(bshape),
+                    k3y=k3y_f[idx].reshape(bshape),
+                    k3z=k3z_f[idx].reshape(bshape),
+                    E3=E3[idx].reshape(bshape),
+                    k3_perp_sq=k3_perp_sq[idx].reshape(bshape),
+                    b_perp=b_perp,
+                    s1p=s1p,
+                    s2p=s2p,
+                    ell1=packet1.ell,
+                    ell2=packet2.ell,
+                    matrix_element=matrix_element,
+                    denominator_mode=denominator_mode,
+                    denominator_regulator=denominator_regulator,
+                )
+                root_integrand = root_weight * A_perp
+
+            integral = np.sum(weights * root_integrand, axis=(1, 2))
         disk_factor = 1.0 / sqrt_Delta0[idx]
         out_f[idx] = (
             prefactor[idx]
-            * np.exp(longitudinal_exp_arg[idx])
             * disk_factor
             * integral
         )
@@ -1601,6 +1805,7 @@ def S_exact_time(
     quadrature: ExactTimeQuadrature | None = None,
     denominator_mode: str = "expanded",
     denominator_regulator: float = 0.0,
+    matrix_element: str = "ultrarelativistic",
     batch_size: int | None = None,
     return_details: bool = False,
 ):
@@ -1623,10 +1828,13 @@ def S_exact_time(
     quadrature:
         Exact-time quadrature settings. Defaults to ``ExactTimeQuadrature()``.
     denominator_mode:
-        ``"expanded"`` for the first-order Moller denominator expansion or
-        ``"exact"`` for the regulated exact denominator.
+        ``"expanded"`` for the ultrarelativistic first-order transverse
+        denominator, ``"exact"`` for the regulated ultrarelativistic
+        transverse denominator, or ``"minkowski"`` for the invariant
+        ``(k1-k3)^2`` denominator used with
+        ``matrix_element="paraxial_massive"``.
     denominator_regulator:
-        Regulator added in exact-denominator mode.
+        Regulator added in ``"exact"`` and ``"minkowski"`` denominator modes.
     batch_size:
         Batch size used by the vectorized non-diagnostic path.  It is ignored
         when ``return_details=True``.
@@ -1643,8 +1851,10 @@ def S_exact_time(
         q = q0 + kappa (cos theta, sin theta).
 
     With ``quadrature.theta_method="analytic"``, the theta integral is
-    evaluated in closed form for ``denominator_mode="expanded"``. Otherwise
-    theta is integrated by the quadrature rule named in ``theta_method``.
+    evaluated in closed form for the ultrarelativistic
+    ``denominator_mode="expanded"``. Otherwise theta is integrated by the
+    quadrature rule named in ``theta_method``. The massive paraxial
+    ``"minkowski"`` denominator requires numerical theta quadrature.
 
     A Gaussian-support cutoff can be used to avoid wasting nodes when the
     exact-time disk radius is much larger than the transverse packet widths.
@@ -1657,7 +1867,7 @@ def S_exact_time(
     quadrature = ExactTimeQuadrature() if quadrature is None else quadrature
     denominator_mode = _mode(
         denominator_mode,
-        ("expanded", "exact"),
+        ("expanded", "exact", "minkowski"),
         "denominator_mode",
     )
     analytic_theta = quadrature.theta_method == "analytic"
@@ -1665,6 +1875,24 @@ def S_exact_time(
         raise ValueError(
             "theta_method='analytic' is implemented only for "
             "denominator_mode='expanded'."
+        )
+    if matrix_element == "paraxial_massive":
+        if denominator_mode != "minkowski":
+            raise ValueError(
+                "matrix_element='paraxial_massive' requires "
+                "denominator_mode='minkowski'; the transverse-only "
+                "'expanded' and 'exact' denominators are ultrarelativistic."
+            )
+        if analytic_theta:
+            raise ValueError(
+                "matrix_element='paraxial_massive' requires numerical theta "
+                "quadrature because (k1-k3)^2 depends on xi and theta. Use "
+                "ExactTimeQuadrature(theta_method='trapezoid')."
+            )
+    elif denominator_mode == "minkowski":
+        raise ValueError(
+            "denominator_mode='minkowski' is defined only for "
+            "matrix_element='paraxial_massive'."
         )
 
     if not return_details:
@@ -1691,14 +1919,10 @@ def S_exact_time(
             quadrature=quadrature,
             denominator_mode=denominator_mode,
             denominator_regulator=denominator_regulator,
+            matrix_element=matrix_element,
             batch_size=1 if batch_size is None else batch_size,
         )
         return S.reshape(-1)[0]
-
-    if not _helicity_conserving(lam1, lam2, lam3, lam4):
-        S_zero = complex_zero()
-        details = {"reason": "helicity delta is zero"}
-        return (S_zero, details) if return_details else S_zero
 
     k3 = vec3(k3)
     k4 = vec3(k4)
@@ -1718,6 +1942,22 @@ def S_exact_time(
 
     eps1 = central_energy(packet1, m)
     eps2 = central_energy(packet2, m)
+    matrix_scale = _matrix_element_scale(
+        matrix_element,
+        eps1,
+        eps2,
+        E3,
+        E4,
+        lam1,
+        lam2,
+        lam3,
+        lam4,
+        m,
+    )
+    if np.all(matrix_scale == 0.0):
+        S_zero = complex_zero()
+        details = {"reason": "matrix element helicity factor is zero"}
+        return (S_zero, details) if return_details else S_zero
 
     gamma1 = eps1 / m
     gamma2 = eps2 / m
@@ -1808,19 +2048,42 @@ def S_exact_time(
         * N1
         * N2
         / _packet_denominator(packet1, packet2)
+        * matrix_scale
     )
 
-    def A_perp_grid(qx, qy):
+    def A_perp_grid(qx, qy, xi=None):
         K_minus_qx = K_perp[0] - qx
         K_minus_qy = K_perp[1] - qy
 
-        if denominator_mode == "expanded":
+        if matrix_element == "paraxial_massive":
+            if xi is None:
+                raise ValueError(
+                    "xi must be provided for the massive paraxial denominator."
+                )
+            k1z = packet1.kbar_z + xi
+            q_sq = qx * qx + qy * qy
+            E1_internal = np.sqrt(m * m + q_sq + k1z * k1z)
+            diff_x = k3_perp[0] - qx
+            diff_y = k3_perp[1] - qy
+            diff_z = k3[2] - k1z
+            t_channel = (
+                (E1_internal - E3) * (E1_internal - E3)
+                - diff_x * diff_x
+                - diff_y * diff_y
+                - diff_z * diff_z
+            )
+            denominator_factor = -1.0 / (
+                t_channel - denominator_regulator * denominator_regulator
+            )
+            matrix_denominator_factor = denominator_factor
+        elif denominator_mode == "expanded":
             if k3_perp_sq == 0.0:
                 raise ValueError("Expanded denominator requires nonzero |k3_perp|.")
             denominator_factor = (
                 1.0 / k3_perp_sq
                 * (1.0 + 2.0 * (qx * k3_perp[0] + qy * k3_perp[1]) / k3_perp_sq)
             )
+            matrix_denominator_factor = denominator_factor
         else:
             diff_x = k3_perp[0] - qx
             diff_y = k3_perp[1] - qy
@@ -1829,6 +2092,7 @@ def S_exact_time(
                 + diff_y * diff_y
                 + denominator_regulator * denominator_regulator
             )
+            matrix_denominator_factor = denominator_factor
 
         q_sq = qx * qx + qy * qy
         K_minus_q_sq = K_minus_qx * K_minus_qx + K_minus_qy * K_minus_qy
@@ -1844,7 +2108,7 @@ def S_exact_time(
             _vortex_monomial_z(z1, packet1.ell)
             * _vortex_monomial_z(z2, packet2.ell)
         )
-        return denominator_factor * transverse_exp * vortex_factor
+        return matrix_denominator_factor * transverse_exp * vortex_factor
 
     integral = complex_zero()
     sigma_eff = 1.0 / np.sqrt(1.0 / (s1p * s1p) + 1.0 / (s2p * s2p))
@@ -1876,10 +2140,13 @@ def S_exact_time(
 
             xi_plus = (-C_z + sqrt_Delta0 * sqrt_factor) / (2.0 * A_z)
             xi_minus = (-C_z - sqrt_Delta0 * sqrt_factor) / (2.0 * A_z)
-            root_weight = (
-                np.exp(-B_z * xi_plus * xi_plus + D_z * xi_plus)
-                + np.exp(-B_z * xi_minus * xi_minus + D_z * xi_minus)
+            root_weight_plus = np.exp(
+                longitudinal_exp_arg - B_z * xi_plus * xi_plus + D_z * xi_plus
             )
+            root_weight_minus = np.exp(
+                longitudinal_exp_arg - B_z * xi_minus * xi_minus + D_z * xi_minus
+            )
+            root_weight = root_weight_plus + root_weight_minus
 
             if analytic_theta:
                 angular_integral = _exact_time_angular_integral_expanded(
@@ -1911,19 +2178,29 @@ def S_exact_time(
                     * theta_weights[None, :]
                     * kappa_nodes[:, None]
                     / sqrt_factor[:, None]
-                    * root_weight[:, None]
                 )
-                integral = np.sum(weights * A_perp_grid(qx, qy))
+                if matrix_element == "paraxial_massive":
+                    A_perp_plus = A_perp_grid(qx, qy, xi=xi_plus[:, None])
+                    A_perp_minus = A_perp_grid(qx, qy, xi=xi_minus[:, None])
+                    root_integrand = (
+                        root_weight_plus[:, None] * A_perp_plus
+                        + root_weight_minus[:, None] * A_perp_minus
+                    )
+                else:
+                    root_integrand = root_weight[:, None] * A_perp_grid(qx, qy)
+                integral = np.sum(weights * root_integrand)
 
     disk_factor = 1.0 / sqrt_Delta0
 
-    S = prefactor * np.exp(longitudinal_exp_arg) * disk_factor * integral
+    S = prefactor * disk_factor * integral
 
     if return_details:
         details = dict(
             N1=N1,
             N2=N2,
             impact_b=b_perp,
+            matrix_element=matrix_element,
+            matrix_element_scale=matrix_scale,
             K_vec=K_vec,
             K_perp=K_perp,
             Kz=Kz,
