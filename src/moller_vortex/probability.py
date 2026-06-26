@@ -32,11 +32,9 @@ from .quadrature import (
     probability_outer_nodes,
     probability_transverse_nodes,
 )
-from .smatrix import (
-    S_exact_time_grid,
-    S_impulse_closed_grid,
-    S_impulse_first_order_grid,
-)
+from .smatrix_time import S_time_grid
+from .smatrix_first_order import S_first_order_grid
+from .smatrix_impulse import S_impulse_grid
 
 
 def _print_progress(
@@ -79,7 +77,340 @@ def _resolve_workers(workers: int | None) -> int:
     return workers
 
 
-def _vectorized_s_abs2_grid(
+def _method_kwargs(method_kwargs: dict | None) -> dict:
+    """Return optional method arguments passed to S-grid functions."""
+    if method_kwargs is None:
+        return {}
+    kwargs = dict(method_kwargs)
+    kwargs.pop("return_details", None)
+    return kwargs
+
+
+def _s_grid(
+    k3x,
+    k3y,
+    k3z,
+    k4x,
+    k4y,
+    k4z,
+    packet1: LGPacket,
+    packet2: LGPacket,
+    impact_b,
+    N1: float,
+    N2: float,
+    m: float,
+    e_charge: float,
+    method: str,
+    method_kwargs: dict | None,
+    lam1: float,
+    lam2: float,
+    lam3: float,
+    lam4: float,
+):
+    """Evaluate the selected S-matrix on a broadcast grid."""
+    kwargs = _method_kwargs(method_kwargs)
+    method = method.lower()
+    if kwargs.get("batch_size") is None:
+        kwargs.pop("batch_size", None)
+
+    if method == "impulse":
+        return S_impulse_grid(
+            k3x,
+            k3y,
+            k3z,
+            k4x,
+            k4y,
+            k4z,
+            packet1,
+            packet2,
+            lam1=lam1,
+            lam2=lam2,
+            lam3=lam3,
+            lam4=lam4,
+            impact_b=impact_b,
+            N1=N1,
+            N2=N2,
+            m=m,
+            e_charge=e_charge,
+            **kwargs,
+        )
+
+    if method == "first_order":
+        return S_first_order_grid(
+            k3x,
+            k3y,
+            k3z,
+            k4x,
+            k4y,
+            k4z,
+            packet1,
+            packet2,
+            lam1=lam1,
+            lam2=lam2,
+            lam3=lam3,
+            lam4=lam4,
+            impact_b=impact_b,
+            N1=N1,
+            N2=N2,
+            m=m,
+            e_charge=e_charge,
+            **kwargs,
+        )
+
+    if method == "time":
+        return S_time_grid(
+            k3x,
+            k3y,
+            k3z,
+            k4x,
+            k4y,
+            k4z,
+            packet1,
+            packet2,
+            lam1=lam1,
+            lam2=lam2,
+            lam3=lam3,
+            lam4=lam4,
+            impact_b=impact_b,
+            N1=N1,
+            N2=N2,
+            m=m,
+            e_charge=e_charge,
+            model="ultrarelativistic",
+            **kwargs,
+        )
+
+    if method == "massive":
+        return S_time_grid(
+            k3x,
+            k3y,
+            k3z,
+            k4x,
+            k4y,
+            k4z,
+            packet1,
+            packet2,
+            lam1=lam1,
+            lam2=lam2,
+            lam3=lam3,
+            lam4=lam4,
+            impact_b=impact_b,
+            N1=N1,
+            N2=N2,
+            m=m,
+            e_charge=e_charge,
+            model="massive",
+            **kwargs,
+        )
+
+    raise ValueError("method must be 'impulse', 'first_order', 'time', or 'massive'.")
+
+
+def _helicity_conserving_abs2(
+    k3x,
+    k3y,
+    k3z,
+    k4x,
+    k4y,
+    k4z,
+    packet1: LGPacket,
+    packet2: LGPacket,
+    impact_b,
+    N1: float,
+    N2: float,
+    m: float,
+    e_charge: float,
+    method: str,
+    method_kwargs: dict | None,
+    lam1: float,
+    lam2: float,
+):
+    """Return |S(lam1, lam2 -> lam1, lam2)|^2."""
+    S = _s_grid(
+        k3x,
+        k3y,
+        k3z,
+        k4x,
+        k4y,
+        k4z,
+        packet1,
+        packet2,
+        impact_b,
+        N1,
+        N2,
+        m,
+        e_charge,
+        method,
+        method_kwargs,
+        lam1=lam1,
+        lam2=lam2,
+        lam3=lam1,
+        lam4=lam2,
+    )
+    return np.abs(S) ** 2
+
+
+def _massive_spin_average_abs2(
+    k3x,
+    k3y,
+    k3z,
+    k4x,
+    k4y,
+    k4z,
+    packet1: LGPacket,
+    packet2: LGPacket,
+    impact_b,
+    N1: float,
+    N2: float,
+    m: float,
+    e_charge: float,
+    method_kwargs: dict | None,
+    helicities: tuple[float, float],
+):
+    """Return the massive spin average with the nonzero helicity channels."""
+    h0 = helicity(helicities[0])
+    h1 = helicity(helicities[1])
+    if h0 != -h1:
+        raise ValueError("massive spin average expects helicities +0.5 and -0.5.")
+
+    same_h0_to_h0 = _s_grid(
+        k3x,
+        k3y,
+        k3z,
+        k4x,
+        k4y,
+        k4z,
+        packet1,
+        packet2,
+        impact_b,
+        N1,
+        N2,
+        m,
+        e_charge,
+        "massive",
+        method_kwargs,
+        lam1=h0,
+        lam2=h0,
+        lam3=h0,
+        lam4=h0,
+    )
+    same_h0_to_h1 = _s_grid(
+        k3x,
+        k3y,
+        k3z,
+        k4x,
+        k4y,
+        k4z,
+        packet1,
+        packet2,
+        impact_b,
+        N1,
+        N2,
+        m,
+        e_charge,
+        "massive",
+        method_kwargs,
+        lam1=h0,
+        lam2=h0,
+        lam3=h1,
+        lam4=h1,
+    )
+    same_h1_to_h1 = _s_grid(
+        k3x,
+        k3y,
+        k3z,
+        k4x,
+        k4y,
+        k4z,
+        packet1,
+        packet2,
+        impact_b,
+        N1,
+        N2,
+        m,
+        e_charge,
+        "massive",
+        method_kwargs,
+        lam1=h1,
+        lam2=h1,
+        lam3=h1,
+        lam4=h1,
+    )
+    same_h1_to_h0 = _s_grid(
+        k3x,
+        k3y,
+        k3z,
+        k4x,
+        k4y,
+        k4z,
+        packet1,
+        packet2,
+        impact_b,
+        N1,
+        N2,
+        m,
+        e_charge,
+        "massive",
+        method_kwargs,
+        lam1=h1,
+        lam2=h1,
+        lam3=h0,
+        lam4=h0,
+    )
+    opposite_h0_h1 = _s_grid(
+        k3x,
+        k3y,
+        k3z,
+        k4x,
+        k4y,
+        k4z,
+        packet1,
+        packet2,
+        impact_b,
+        N1,
+        N2,
+        m,
+        e_charge,
+        "massive",
+        method_kwargs,
+        lam1=h0,
+        lam2=h1,
+        lam3=h0,
+        lam4=h1,
+    )
+    opposite_h1_h0 = _s_grid(
+        k3x,
+        k3y,
+        k3z,
+        k4x,
+        k4y,
+        k4z,
+        packet1,
+        packet2,
+        impact_b,
+        N1,
+        N2,
+        m,
+        e_charge,
+        "massive",
+        method_kwargs,
+        lam1=h1,
+        lam2=h0,
+        lam3=h1,
+        lam4=h0,
+    )
+
+    return 0.25 * (
+        np.abs(same_h0_to_h0) ** 2
+        + np.abs(same_h0_to_h1) ** 2
+        + np.abs(same_h1_to_h1) ** 2
+        + np.abs(same_h1_to_h0) ** 2
+        + np.abs(opposite_h0_h1) ** 2
+        + np.abs(opposite_h1_h0) ** 2
+    )
+
+
+def _s_abs2_grid(
     k3x,
     k3y,
     k3z,
@@ -94,163 +425,56 @@ def _vectorized_s_abs2_grid(
     m: float,
     e_charge: float,
     helicities: tuple[float, ...],
-    s_matrix: str,
-    s_matrix_kwargs: dict | None,
+    method: str,
+    method_kwargs: dict | None,
 ):
-    """Return vectorized |S|^2 for supported S-matrix selectors."""
+    """Return vectorized spin-averaged |S|^2."""
     if len(helicities) != 2:
         raise ValueError("spin averaging expects exactly two helicity labels.")
 
-    kwargs = {} if s_matrix_kwargs is None else dict(s_matrix_kwargs)
-    kwargs.pop("return_details", None)
-    matrix_element = kwargs.get("matrix_element", "ultrarelativistic")
-    if matrix_element not in ("ultrarelativistic", "paraxial_massive"):
-        raise ValueError(
-            "matrix_element must be 'ultrarelativistic' or 'paraxial_massive'."
-        )
-    if matrix_element == "paraxial_massive" and s_matrix != "exact_time":
-        raise ValueError(
-            "matrix_element='paraxial_massive' is implemented only for "
-            "s_matrix='exact_time' with denominator_mode='minkowski'. The "
-            "closed and first_order probability kernels use the old "
-            "ultrarelativistic transverse denominator."
-        )
-    lam1 = helicities[0]
-    lam2 = helicities[1]
+    method = method.lower()
 
-    def evaluate_channel(channel_lam1, channel_lam2, channel_lam3, channel_lam4):
-        channel_kwargs = dict(kwargs)
-        if s_matrix == "closed":
-            allowed = {"matrix_element"}
-            if any(key not in allowed for key in channel_kwargs):
-                raise ValueError(
-                    "s_matrix_kwargs for 'closed' may contain only "
-                    "'matrix_element'."
-                )
-            return S_impulse_closed_grid(
-                k3x,
-                k3y,
-                k3z,
-                k4x,
-                k4y,
-                k4z,
-                packet1,
-                packet2,
-                lam1=channel_lam1,
-                lam2=channel_lam2,
-                lam3=channel_lam3,
-                lam4=channel_lam4,
-                impact_b=impact_b,
-                N1=N1,
-                N2=N2,
-                m=m,
-                e_charge=e_charge,
-                **channel_kwargs,
-            )
-
-        if s_matrix == "first_order":
-            allowed = {"time_step", "time_step_scale", "matrix_element"}
-            if any(key not in allowed for key in channel_kwargs):
-                raise ValueError(
-                    "s_matrix_kwargs for 'first_order' may contain only "
-                    "'time_step', 'time_step_scale', and 'matrix_element'."
-                )
-            return S_impulse_first_order_grid(
-                k3x,
-                k3y,
-                k3z,
-                k4x,
-                k4y,
-                k4z,
-                packet1,
-                packet2,
-                lam1=channel_lam1,
-                lam2=channel_lam2,
-                lam3=channel_lam3,
-                lam4=channel_lam4,
-                impact_b=impact_b,
-                N1=N1,
-                N2=N2,
-                m=m,
-                e_charge=e_charge,
-                **channel_kwargs,
-            )
-
-        if s_matrix == "exact_time":
-            allowed = {
-                "quadrature",
-                "denominator_mode",
-                "denominator_regulator",
-                "batch_size",
-                "matrix_element",
-            }
-            if any(key not in allowed for key in channel_kwargs):
-                raise ValueError(
-                    "s_matrix_kwargs for 'exact_time' may contain only "
-                    "'quadrature', 'denominator_mode', 'denominator_regulator', "
-                    "'batch_size', and 'matrix_element'."
-                )
-            if channel_kwargs.get("batch_size") is None:
-                channel_kwargs.pop("batch_size", None)
-            return S_exact_time_grid(
-                k3x,
-                k3y,
-                k3z,
-                k4x,
-                k4y,
-                k4z,
-                packet1,
-                packet2,
-                lam1=channel_lam1,
-                lam2=channel_lam2,
-                lam3=channel_lam3,
-                lam4=channel_lam4,
-                impact_b=impact_b,
-                N1=N1,
-                N2=N2,
-                m=m,
-                e_charge=e_charge,
-                **channel_kwargs,
-            )
-
-        raise ValueError("s_matrix must be 'closed', 'first_order', or 'exact_time'.")
-
-    if matrix_element == "paraxial_massive":
-        h0 = helicity(helicities[0])
-        h1 = helicity(helicities[1])
-        if h0 != -h1:
-            raise ValueError("spin averaging expects the two helicities +0.5 and -0.5.")
-
-        same_h0_direct = evaluate_channel(h0, h0, h0, h0)
-        same_h0_exchange = evaluate_channel(h0, h0, h1, h1)
-        same_h1_direct = evaluate_channel(h1, h1, h1, h1)
-        same_h1_exchange = evaluate_channel(h1, h1, h0, h0)
-
-        opposite_h0_h1 = evaluate_channel(h0, h1, h0, h1)
-        opposite_h1_h0 = evaluate_channel(h1, h0, h1, h0)
-
-        return 0.25 * (
-            np.abs(same_h0_direct) ** 2
-            + np.abs(same_h0_exchange) ** 2
-            + np.abs(same_h1_direct) ** 2
-            + np.abs(same_h1_exchange) ** 2
-            + np.abs(opposite_h0_h1) ** 2
-            + np.abs(opposite_h1_h0) ** 2
+    if method == "massive":
+        return _massive_spin_average_abs2(
+            k3x,
+            k3y,
+            k3z,
+            k4x,
+            k4y,
+            k4z,
+            packet1,
+            packet2,
+            impact_b,
+            N1,
+            N2,
+            m,
+            e_charge,
+            method_kwargs,
+            helicities=(helicities[0], helicities[1]),
         )
 
-    if s_matrix == "closed":
-        S = evaluate_channel(lam1, lam2, lam1, lam2)
-        return np.abs(S) ** 2
+    if method in ("impulse", "first_order", "time"):
+        return _helicity_conserving_abs2(
+            k3x,
+            k3y,
+            k3z,
+            k4x,
+            k4y,
+            k4z,
+            packet1,
+            packet2,
+            impact_b,
+            N1,
+            N2,
+            m,
+            e_charge,
+            method,
+            method_kwargs,
+            lam1=helicity(helicities[0]),
+            lam2=helicity(helicities[1]),
+        )
 
-    if s_matrix == "first_order":
-        S = evaluate_channel(lam1, lam2, lam1, lam2)
-        return np.abs(S) ** 2
-
-    if s_matrix == "exact_time":
-        S = evaluate_channel(lam1, lam2, lam1, lam2)
-        return np.abs(S) ** 2
-
-    raise ValueError("s_matrix must be 'closed', 'first_order', or 'exact_time'.")
+    raise ValueError("method must be 'impulse', 'first_order', 'time', or 'massive'.")
 
 
 def _prepare_probability_inputs(
@@ -263,8 +487,8 @@ def _prepare_probability_inputs(
     m: float,
     e_charge: float,
     helicities: Iterable[float],
-    s_matrix: str,
-    s_matrix_kwargs: dict | None,
+    method: str,
+    method_kwargs: dict | None,
 ):
     """Validate probability inputs and compute missing normalizations.
 
@@ -280,8 +504,8 @@ def _prepare_probability_inputs(
         Particle mass and electric charge in project units.
     helicities:
         Helicity labels to include in spin averaging.
-    s_matrix, s_matrix_kwargs:
-        S-matrix selector and optional extra keyword arguments.
+    method, method_kwargs:
+        Calculation method and optional extra keyword arguments.
 
     Returns
     -------
@@ -306,12 +530,12 @@ def _prepare_probability_inputs(
         m=m,
         e_charge=e_charge,
         helicities=tuple(helicities),
-        s_matrix=s_matrix,
-        s_matrix_kwargs=s_matrix_kwargs,
+        method=method,
+        method_kwargs=method_kwargs,
     )
 
 
-def _diff_probability_resolved(
+def _integrate_diff_probability(
     K_perp,
     quadrature: ProbabilityQuadrature,
     *,
@@ -323,8 +547,8 @@ def _diff_probability_resolved(
     m: float,
     e_charge: float,
     helicities: tuple[float, ...],
-    s_matrix: str,
-    s_matrix_kwargs: dict | None,
+    method: str,
+    method_kwargs: dict | None,
 ) -> np.float64:
     """Compute ``w(K_perp)`` with already prepared inputs.
 
@@ -335,7 +559,7 @@ def _diff_probability_resolved(
     quadrature:
         Inner probability quadrature settings.
     packet1, packet2, impact_b, N1, N2, m, e_charge, helicities,
-    s_matrix, s_matrix_kwargs:
+    method, method_kwargs:
         Validated values from ``_prepare_probability_inputs``.
 
     Returns
@@ -365,7 +589,7 @@ def _diff_probability_resolved(
     k4x_grid = K[0] - k3x_grid
     k4y_grid = K[1] - k3y_grid
 
-    s_abs2_grid = _vectorized_s_abs2_grid(
+    s_abs2_grid = _s_abs2_grid(
         k3x_grid,
         k3y_grid,
         z3_grid,
@@ -380,15 +604,15 @@ def _diff_probability_resolved(
         m,
         e_charge,
         helicities,
-        s_matrix,
-        s_matrix_kwargs,
+        method,
+        method_kwargs,
     )
 
     E3 = np.sqrt(
-        m * m + k3x_grid * k3x_grid + k3y_grid * k3y_grid + z3_grid * z3_grid
+        m ** 2 + k3x_grid ** 2 + k3y_grid ** 2 + z3_grid ** 2
     )
     E4 = np.sqrt(
-        m * m + k4x_grid * k4x_grid + k4y_grid * k4y_grid + z4_grid * z4_grid
+        m ** 2 + k4x_grid ** 2 + k4y_grid ** 2 + z4_grid ** 2
     )
     weights = (
         rho_weights[:, None, None, None]
@@ -400,7 +624,7 @@ def _diff_probability_resolved(
     return FLOAT_DTYPE(np.sum(weights * rho_grid * phase_space * s_abs2_grid))
 
 
-def _longitudinal_density_resolved(
+def _integrate_longitudinal_density(
     k3z: float,
     k4z: float,
     K_perp,
@@ -414,8 +638,8 @@ def _longitudinal_density_resolved(
     m: float,
     e_charge: float,
     helicities: tuple[float, ...],
-    s_matrix: str,
-    s_matrix_kwargs: dict | None,
+    method: str,
+    method_kwargs: dict | None,
 ) -> np.float64:
     """Compute the longitudinal density at fixed ``k3z`` and ``k4z``.
 
@@ -428,7 +652,7 @@ def _longitudinal_density_resolved(
     quadrature:
         Probability quadrature settings for ``k3_perp`` and ``phi``.
     packet1, packet2, impact_b, N1, N2, m, e_charge, helicities,
-    s_matrix, s_matrix_kwargs:
+    method, method_kwargs:
         Validated values from ``_prepare_probability_inputs``.
 
     Returns
@@ -454,7 +678,7 @@ def _longitudinal_density_resolved(
     k4x_grid = K[0] - k3x_grid
     k4y_grid = K[1] - k3y_grid
 
-    s_abs2_grid = _vectorized_s_abs2_grid(
+    s_abs2_grid = _s_abs2_grid(
         k3x_grid,
         k3y_grid,
         z3_grid,
@@ -469,15 +693,15 @@ def _longitudinal_density_resolved(
         m,
         e_charge,
         helicities,
-        s_matrix,
-        s_matrix_kwargs,
+        method,
+        method_kwargs,
     )
 
     E3 = np.sqrt(
-        m * m + k3x_grid * k3x_grid + k3y_grid * k3y_grid + z3_grid * z3_grid
+        m ** 2 + k3x_grid ** 2 + k3y_grid ** 2 + z3_grid ** 2
     )
     E4 = np.sqrt(
-        m * m + k4x_grid * k4x_grid + k4y_grid * k4y_grid + z4_grid * z4_grid
+        m ** 2 + k4x_grid ** 2 + k4y_grid ** 2 + z4_grid ** 2
     )
     weights = rho_weights[:, None, None, None] * phi_weights[None, :, None, None]
     phase_space = phase_space_const / (4.0 * E3 * E4)
@@ -496,8 +720,8 @@ def diff_probability(
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
     helicities: Iterable[float] = (-0.5, 0.5),
-    s_matrix: str = "closed",
-    s_matrix_kwargs: dict | None = None,
+    method: str = "impulse",
+    method_kwargs: dict | None = None,
 ) -> np.float64:
     """Compute the differential probability density at fixed K_perp.
 
@@ -517,8 +741,8 @@ def diff_probability(
         Particle mass and electric charge in project units.
     helicities:
         Helicity labels used for spin averaging.
-    s_matrix, s_matrix_kwargs:
-        S-matrix selector and optional extra keyword arguments.
+    method, method_kwargs:
+        Calculation method and optional extra keyword arguments.
 
     Returns
     -------
@@ -541,10 +765,10 @@ def diff_probability(
         m=m,
         e_charge=e_charge,
         helicities=helicities,
-        s_matrix=s_matrix,
-        s_matrix_kwargs=s_matrix_kwargs,
+        method=method,
+        method_kwargs=method_kwargs,
     )
-    return _diff_probability_resolved(K_perp, quadrature, **inputs)
+    return _integrate_diff_probability(K_perp, quadrature, **inputs)
 
 
 def longitudinal_density(
@@ -561,8 +785,8 @@ def longitudinal_density(
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
     helicities: Iterable[float] = (-0.5, 0.5),
-    s_matrix: str = "closed",
-    s_matrix_kwargs: dict | None = None,
+    method: str = "impulse",
+    method_kwargs: dict | None = None,
 ) -> np.float64:
     """Compute ``d^2 w / (dk3z dk4z)`` at one longitudinal point.
 
@@ -584,8 +808,8 @@ def longitudinal_density(
         Particle mass and electric charge in project units.
     helicities:
         Helicity labels used for spin averaging.
-    s_matrix, s_matrix_kwargs:
-        S-matrix selector and optional extra keyword arguments.
+    method, method_kwargs:
+        Calculation method and optional extra keyword arguments.
 
     Returns
     -------
@@ -602,10 +826,10 @@ def longitudinal_density(
         m=m,
         e_charge=e_charge,
         helicities=helicities,
-        s_matrix=s_matrix,
-        s_matrix_kwargs=s_matrix_kwargs,
+        method=method,
+        method_kwargs=method_kwargs,
     )
-    return _longitudinal_density_resolved(k3z, k4z, K_perp, quadrature, **inputs)
+    return _integrate_longitudinal_density(k3z, k4z, K_perp, quadrature, **inputs)
 
 
 def longitudinal_density_grid(
@@ -622,8 +846,8 @@ def longitudinal_density_grid(
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
     helicities: Iterable[float] = (-0.5, 0.5),
-    s_matrix: str = "closed",
-    s_matrix_kwargs: dict | None = None,
+    method: str = "impulse",
+    method_kwargs: dict | None = None,
     progress: bool = False,
     workers: int | None = None,
 ) -> np.ndarray:
@@ -639,7 +863,7 @@ def longitudinal_density_grid(
         Incoming wave packets.
     quadrature:
         Probability quadrature settings for the remaining transverse integral.
-    impact_b, N1, N2, m, e_charge, helicities, s_matrix, s_matrix_kwargs:
+    impact_b, N1, N2, m, e_charge, helicities, method, method_kwargs:
         Same meaning as in ``longitudinal_density``.
     progress:
         If True, update completed point count, total point count, percent,
@@ -666,8 +890,8 @@ def longitudinal_density_grid(
         m=m,
         e_charge=e_charge,
         helicities=helicities,
-        s_matrix=s_matrix,
-        s_matrix_kwargs=s_matrix_kwargs,
+        method=method,
+        method_kwargs=method_kwargs,
     )
 
     values = real_empty((len(k4z_values), len(k3z_values)))
@@ -677,7 +901,7 @@ def longitudinal_density_grid(
 
     if workers > 1:
         def evaluate_point(i4, i3, k4z, k3z):
-            value = _longitudinal_density_resolved(
+            value = _integrate_longitudinal_density(
                 k3z,
                 k4z,
                 K_perp,
@@ -710,7 +934,7 @@ def longitudinal_density_grid(
 
     for i4, k4z in enumerate(k4z_values):
         for i3, k3z in enumerate(k3z_values):
-            values[i4, i3] = _longitudinal_density_resolved(
+            values[i4, i3] = _integrate_longitudinal_density(
                 k3z,
                 k4z,
                 K_perp,
@@ -749,8 +973,8 @@ def diff_probability_grid(
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
     helicities: Iterable[float] = (-0.5, 0.5),
-    s_matrix: str = "closed",
-    s_matrix_kwargs: dict | None = None,
+    method: str = "impulse",
+    method_kwargs: dict | None = None,
     progress: bool = False,
     workers: int | None = None,
 ) -> np.ndarray:
@@ -764,7 +988,7 @@ def diff_probability_grid(
         Incoming wave packets.
     quadrature:
         Probability quadrature settings.
-    impact_b, N1, N2, m, e_charge, helicities, s_matrix, s_matrix_kwargs:
+    impact_b, N1, N2, m, e_charge, helicities, method, method_kwargs:
         Same meaning as in ``diff_probability``.
     progress:
         If True, update completed point count, total point count, percent,
@@ -790,8 +1014,8 @@ def diff_probability_grid(
         m=m,
         e_charge=e_charge,
         helicities=helicities,
-        s_matrix=s_matrix,
-        s_matrix_kwargs=s_matrix_kwargs,
+        method=method,
+        method_kwargs=method_kwargs,
     )
 
     values = real_empty((len(Ky_values), len(Kx_values)))
@@ -802,7 +1026,7 @@ def diff_probability_grid(
     if workers > 1:
         def evaluate_point(iy, ix, Ky, Kx):
             K_perp = real_array([Kx, Ky], shape=(2,))
-            value = _diff_probability_resolved(K_perp, quadrature, **inputs)
+            value = _integrate_diff_probability(K_perp, quadrature, **inputs)
             return iy, ix, value
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -830,7 +1054,11 @@ def diff_probability_grid(
     for iy, Ky in enumerate(Ky_values):
         for ix, Kx in enumerate(Kx_values):
             K_perp = real_array([Kx, Ky], shape=(2,))
-            values[iy, ix] = _diff_probability_resolved(K_perp, quadrature, **inputs)
+            values[iy, ix] = _integrate_diff_probability(
+                K_perp,
+                quadrature,
+                **inputs,
+            )
 
             if progress:
                 completed = iy * len(Kx_values) + ix + 1
@@ -850,14 +1078,14 @@ def diff_probability_grid(
     return values
 
 
-def _outer_K_moments(
+def _integrate_total_probability(
     quadrature: ProbabilityQuadrature,
     inputs: dict,
     *,
     progress: bool = False,
     workers: int | None = None,
-) -> tuple[np.float64, np.float64]:
-    """Return total probability and the ``K_y`` numerator.
+) -> np.float64:
+    """Integrate the probability over the configured K_perp domain.
 
     Parameters
     ----------
@@ -873,9 +1101,98 @@ def _outer_K_moments(
 
     Returns
     -------
-    tuple[np.float64, np.float64]
-        Total probability and numerator for ``Ky_average``.
+    np.float64
+        Total probability.
     """
+    (K_nodes, K_weights), (phi_nodes, phi_weights) = probability_outer_nodes(quadrature)
+
+    probability = FLOAT_DTYPE(0.0)
+    start_total = time.perf_counter()
+    total_points = len(K_nodes) * len(phi_nodes)
+    workers = _resolve_workers(workers)
+
+    if workers > 1:
+        probability_parts = real_empty(total_points)
+
+        def evaluate_point(index, K, w_K, phi_K, w_phi_K):
+            Kx = K * np.cos(phi_K)
+            Ky = K * np.sin(phi_K)
+            K_perp = real_array([Kx, Ky], shape=(2,))
+            w_value = _integrate_diff_probability(K_perp, quadrature, **inputs)
+            weight = w_K * w_phi_K * K
+            return index, weight * w_value
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = []
+            index = 0
+            for K, w_K in zip(K_nodes, K_weights):
+                for phi_K, w_phi_K in zip(phi_nodes, phi_weights):
+                    futures.append(
+                        executor.submit(
+                            evaluate_point,
+                            index,
+                            K,
+                            w_K,
+                            phi_K,
+                            w_phi_K,
+                        )
+                    )
+                    index += 1
+
+            for completed, future in enumerate(as_completed(futures), start=1):
+                index, probability_part = future.result()
+                probability_parts[index] = probability_part
+
+                if progress:
+                    elapsed_total = time.perf_counter() - start_total
+                    _print_progress(
+                        label="total_probability",
+                        completed=completed,
+                        total=total_points,
+                        elapsed=elapsed_total,
+                        point_text=f"workers = {workers}",
+                    )
+
+        probability = np.sum(probability_parts, dtype=FLOAT_DTYPE)
+        return probability
+
+    for iK, (K, w_K) in enumerate(zip(K_nodes, K_weights)):
+        for i_phi, (phi_K, w_phi_K) in enumerate(zip(phi_nodes, phi_weights)):
+            Kx = K * np.cos(phi_K)
+            Ky = K * np.sin(phi_K)
+            K_perp = real_array([Kx, Ky], shape=(2,))
+
+            w_value = _integrate_diff_probability(K_perp, quadrature, **inputs)
+            weight = w_K * w_phi_K * K
+
+            probability = probability + weight * w_value
+
+            if progress:
+                completed = iK * len(phi_nodes) + i_phi + 1
+                elapsed_total = time.perf_counter() - start_total
+                _print_progress(
+                    label="total_probability",
+                    completed=completed,
+                    total=total_points,
+                    elapsed=elapsed_total,
+                    point_text=(
+                        f"K row {iK + 1} / {len(K_nodes)}"
+                        f" | phi {i_phi + 1} / {len(phi_nodes)}"
+                        f" | K = {K:.12e} MeV"
+                    ),
+                )
+
+    return probability
+
+
+def _integrate_ky_average_parts(
+    quadrature: ProbabilityQuadrature,
+    inputs: dict,
+    *,
+    progress: bool = False,
+    workers: int | None = None,
+) -> tuple[np.float64, np.float64]:
+    """Return total probability and the K_y-weighted numerator."""
     (K_nodes, K_weights), (phi_nodes, phi_weights) = probability_outer_nodes(quadrature)
 
     probability = FLOAT_DTYPE(0.0)
@@ -892,7 +1209,7 @@ def _outer_K_moments(
             Kx = K * np.cos(phi_K)
             Ky = K * np.sin(phi_K)
             K_perp = real_array([Kx, Ky], shape=(2,))
-            w_value = _diff_probability_resolved(K_perp, quadrature, **inputs)
+            w_value = _integrate_diff_probability(K_perp, quadrature, **inputs)
             weight = w_K * w_phi_K * K
             return index, weight * w_value, weight * Ky * w_value
 
@@ -921,7 +1238,7 @@ def _outer_K_moments(
                 if progress:
                     elapsed_total = time.perf_counter() - start_total
                     _print_progress(
-                        label="outer_K_moments",
+                        label="ky_average",
                         completed=completed,
                         total=total_points,
                         elapsed=elapsed_total,
@@ -938,7 +1255,7 @@ def _outer_K_moments(
             Ky = K * np.sin(phi_K)
             K_perp = real_array([Kx, Ky], shape=(2,))
 
-            w_value = _diff_probability_resolved(K_perp, quadrature, **inputs)
+            w_value = _integrate_diff_probability(K_perp, quadrature, **inputs)
             weight = w_K * w_phi_K * K
 
             probability = probability + weight * w_value
@@ -948,7 +1265,7 @@ def _outer_K_moments(
                 completed = iK * len(phi_nodes) + i_phi + 1
                 elapsed_total = time.perf_counter() - start_total
                 _print_progress(
-                    label="outer_K_moments",
+                    label="ky_average",
                     completed=completed,
                     total=total_points,
                     elapsed=elapsed_total,
@@ -973,8 +1290,8 @@ def total_probability(
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
     helicities: Iterable[float] = (-0.5, 0.5),
-    s_matrix: str = "closed",
-    s_matrix_kwargs: dict | None = None,
+    method: str = "impulse",
+    method_kwargs: dict | None = None,
     progress: bool = False,
     workers: int | None = None,
 ) -> np.float64:
@@ -986,7 +1303,7 @@ def total_probability(
         Incoming wave packets.
     quadrature:
         Probability quadrature settings including ``K_perp_range``.
-    impact_b, N1, N2, m, e_charge, helicities, s_matrix, s_matrix_kwargs:
+    impact_b, N1, N2, m, e_charge, helicities, method, method_kwargs:
         Same meaning as in ``diff_probability``.
     progress:
         If True, update completed outer ``K_perp`` point count, total point
@@ -1008,10 +1325,10 @@ def total_probability(
         m=m,
         e_charge=e_charge,
         helicities=helicities,
-        s_matrix=s_matrix,
-        s_matrix_kwargs=s_matrix_kwargs,
+        method=method,
+        method_kwargs=method_kwargs,
     )
-    probability, _ = _outer_K_moments(
+    probability = _integrate_total_probability(
         quadrature,
         inputs,
         progress=progress,
@@ -1020,7 +1337,7 @@ def total_probability(
     return probability
 
 
-def Ky_average(
+def ky_average(
     packet1: LGPacket,
     packet2: LGPacket,
     quadrature: ProbabilityQuadrature,
@@ -1031,8 +1348,8 @@ def Ky_average(
     m: float = ELECTRON_MASS,
     e_charge: float = ELECTRON_CHARGE,
     helicities: Iterable[float] = (-0.5, 0.5),
-    s_matrix: str = "closed",
-    s_matrix_kwargs: dict | None = None,
+    method: str = "impulse",
+    method_kwargs: dict | None = None,
     progress: bool = False,
     workers: int | None = None,
 ) -> np.float64:
@@ -1044,7 +1361,7 @@ def Ky_average(
         Incoming wave packets.
     quadrature:
         Probability quadrature settings including ``K_perp_range``.
-    impact_b, N1, N2, m, e_charge, helicities, s_matrix, s_matrix_kwargs:
+    impact_b, N1, N2, m, e_charge, helicities, method, method_kwargs:
         Same meaning as in ``diff_probability``.
     progress:
         If True, update completed outer ``K_perp`` point count, total point
@@ -1066,10 +1383,10 @@ def Ky_average(
         m=m,
         e_charge=e_charge,
         helicities=helicities,
-        s_matrix=s_matrix,
-        s_matrix_kwargs=s_matrix_kwargs,
+        method=method,
+        method_kwargs=method_kwargs,
     )
-    probability, numerator = _outer_K_moments(
+    probability, numerator = _integrate_ky_average_parts(
         quadrature,
         inputs,
         progress=progress,

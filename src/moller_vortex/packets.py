@@ -11,7 +11,6 @@ from scipy.integrate import quad
 from scipy.special import kve
 
 from .constants import ELECTRON_MASS, PI
-from .kinematics import energy, vec2, vec3
 
 
 NORMALIZATION_QUAD_EPSABS = 1.0e-16
@@ -64,7 +63,7 @@ class LGPacket:
         if self.sigma_perp <= 0.0 or self.sigma_par <= 0.0:
             raise ValueError("Packet widths must be positive.")
         if self.sigma_perp > self.sigma_par:
-            raise ValueError("The on-axis normalization integral requires sigma_perp <= sigma_par.")
+            raise ValueError("The normalization integral requires sigma_perp <= sigma_par.")
         return self
 
 
@@ -84,7 +83,7 @@ def central_energy(packet: LGPacket, m: float = ELECTRON_MASS) -> float:
         ``sqrt(m**2 + packet.kbar_z**2)``.
     """
     packet = packet.checked()
-    return np.sqrt(m * m + packet.kbar_z ** 2)
+    return np.sqrt(m ** 2 + packet.kbar_z ** 2)
 
 
 def normalization_constant(
@@ -143,13 +142,13 @@ def normalization_constant(
             Integrand value for the one-dimensional normalization integral.
         """
         k_perp = sigma_perp * y
-        eps_perp = np.hypot(m, k_perp)
+        eps_perp = np.sqrt(m ** 2 + k_perp ** 2)
 
-        eps_minus_m = k_perp * k_perp / (eps_perp + m)
+        eps_minus_m = k_perp ** 2 / (eps_perp + m)
         bessel_arg = 2.0 * m * eps_perp / sigma_par ** 2
 
         exponent = (
-            -radial_coeff * y * y
+            -radial_coeff * y ** 2
             -2.0 * m * eps_minus_m / sigma_par ** 2
         )
 
@@ -185,7 +184,7 @@ def spherical_normalization_constant(
     packet: LGPacket,
     m: float = ELECTRON_MASS,
 ) -> float:
-    """Return the closed normalization constant in the spherical limit.
+    """Return the analytic normalization constant in the spherical limit.
 
     Parameters
     ----------
@@ -206,69 +205,13 @@ def spherical_normalization_constant(
 
     ell_abs = abs(packet.ell)
     sigma = packet.sigma_perp
-    argument = 2.0 * m * m / sigma ** 2
+    argument = 2.0 * m ** 2 / sigma ** 2
 
     return (
         2.0 ** 1.5
         * PI
         / (sigma * np.sqrt(kve(ell_abs + 1, argument)))
     )
-
-
-def lg_packet_phi(
-    k,
-    packet: LGPacket,
-    N: float,
-    m: float = ELECTRON_MASS,
-    impact_b=(0.0, 0.0),
-) -> complex:
-    """Value of the on-axis LG packet in momentum space.
-
-    Parameters
-    ----------
-    k:
-        Momentum three-vector.
-    packet:
-        Packet parameters.
-    N:
-        Packet normalization constant.
-    m:
-        Particle mass.
-    impact_b:
-        Optional transverse impact parameter phase.
-
-    Returns
-    -------
-    complex
-        Momentum-space packet wave-function value.
-
-    impact_b is included only when this function is deliberately used for the
-    displaced second incoming packet.
-    """
-    packet = packet.checked()
-    k = vec3(k)
-    b = vec2(impact_b)
-
-    k_perp = k[:2]
-    k_perp_abs = np.linalg.norm(k_perp)
-    phi = np.arctan2(k_perp[1], k_perp[0]) if k_perp_abs != 0.0 else 0.0
-
-    ell_abs = abs(packet.ell)
-    E = energy(k, m)
-    Ebar = central_energy(packet, m)
-
-    exponent = (
-        (E - Ebar) ** 2 / (2.0 * packet.sigma_par ** 2)
-        - k_perp_abs ** 2 / (2.0 * packet.sigma_perp ** 2)
-        - (k[2] - packet.kbar_z) ** 2 / (2.0 * packet.sigma_par ** 2)
-        + 1j * packet.ell * phi
-        + 1j * np.dot(b, k_perp)
-    )
-
-    prefactor = N * k_perp_abs ** ell_abs
-    prefactor /= packet.sigma_perp ** ell_abs * np.sqrt(math.factorial(ell_abs))
-
-    return prefactor * np.exp(exponent)
 
 
 def resolve_normalizations(

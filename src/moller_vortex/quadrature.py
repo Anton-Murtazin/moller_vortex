@@ -159,7 +159,7 @@ def nodes_and_weights(
 
 @dataclass(frozen=True)
 class ExactTimeQuadrature:
-    """Settings for direct-kappa S_exact_time transverse disk integration.
+    """Settings for direct-kappa S_time integration.
 
     Parameters
     ----------
@@ -168,7 +168,7 @@ class ExactTimeQuadrature:
         ``theta_method="analytic"``.
     n_kappa, kappa_method, theta_method:
         Node count and method names. ``theta_method="analytic"`` evaluates the
-        expanded-denominator theta integral in closed form.
+        ultrarelativistic theta integral analytically.
     kappa_n_sigma:
         Integrate only over the transverse Gaussian support, using this many
         effective transverse widths around the Gaussian center. Set to
@@ -178,7 +178,7 @@ class ExactTimeQuadrature:
     -------
     ExactTimeQuadrature
         Immutable configuration object. Nodes are built by
-        ``exact_time_nodes`` with a physical radial interval.
+        ``time_nodes`` with a physical radial interval.
     """
 
     n_theta: int = 128
@@ -198,7 +198,7 @@ class ProbabilityQuadrature:
         Inner integration ranges used by ``diff_probability``.
     K_perp_range:
         Outer transverse-total-momentum range used by ``total_probability``
-        and ``Ky_average``.
+        and ``ky_average``.
     n_k3_perp, n_phi, n_k3z, n_k4z, n_K_perp, n_K_phi:
         Node counts for the corresponding axes.
     *_method:
@@ -374,11 +374,11 @@ def probability_outer_nodes(
     return K_perp, K_phi
 
 
-def exact_time_nodes(
+def time_nodes(
     quadrature: ExactTimeQuadrature,
     radial_interval: tuple[float, float] | None = None,
 ) -> tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]:
-    """Return radial and theta nodes for S_exact_time.
+    """Return radial and theta nodes for S_time.
 
     Parameters
     ----------
