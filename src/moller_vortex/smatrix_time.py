@@ -259,19 +259,19 @@ def _analytic_theta_integral(
 
     L1 = abs(ell1)
     L2 = abs(ell2)
-    a = L1 if ell1 >= 0 else 0
-    b = 0 if ell1 >= 0 else L1
-    c = L2 if ell2 >= 0 else 0
-    d = 0 if ell2 >= 0 else L2
+    a_exp = L1 if ell1 >= 0 else 0
+    b_exp = 0 if ell1 >= 0 else L1
+    c_exp = L2 if ell2 >= 0 else 0
+    d_exp = 0 if ell2 >= 0 else L2
 
-    min_m = -(b + d + 1)
-    max_m = a + c + 1
+    min_m = -(b_exp + d_exp + 1)
+    max_m = a_exp + c_exp + 1
     kernels_scaled = _angular_kernels_with_exponent(min_m, max_m, u, v, C_perp)
 
-    plus_base = _product_terms(q0_plus, p0_plus, kappa, a, c)
-    plus_q = _product_terms(q0_plus, p0_plus, kappa, a + 1, c)
-    minus_base = _product_terms(q0_minus, p0_minus, kappa, b, d)
-    minus_q = _product_terms(q0_minus, p0_minus, kappa, b + 1, d)
+    plus_base = _product_terms(q0_plus, p0_plus, kappa, a_exp, c_exp)
+    plus_q = _product_terms(q0_plus, p0_plus, kappa, a_exp + 1, c_exp)
+    minus_base = _product_terms(q0_minus, p0_minus, kappa, b_exp, d_exp)
+    minus_q = _product_terms(q0_minus, p0_minus, kappa, b_exp + 1, d_exp)
 
     D0 = _angular_polynomial(plus_base, minus_base, kernels_scaled)
     D_plus = _angular_polynomial(plus_q, minus_base, kernels_scaled)

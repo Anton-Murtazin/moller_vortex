@@ -752,9 +752,13 @@ def diff_probability(
     The implemented integral is
 
         w(K_perp) = int d^2 k3_perp dk3z dk4z
-            [(1/4) sum_spins |S_fi|^2] / [(2*pi)^6 4 E3 E4],
+            |S(lam1, lam2 -> lam1, lam2)|^2 / [(2*pi)^6 4 E3 E4],
 
-    with k4_perp = K_perp - k3_perp.
+    with k4_perp = K_perp - k3_perp, where lam1 = helicities[0] and
+    lam2 = helicities[1].  Only the helicity-conserving channel is summed
+    for methods "impulse", "first_order", and "time".  For method "massive",
+    a spin average over all nonzero initial/final helicity combinations is
+    performed with the explicit 1/4 prefactor.
     """
     inputs = _prepare_probability_inputs(
         packet1,

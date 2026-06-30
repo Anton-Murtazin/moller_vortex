@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 from .constants import ELECTRON_CHARGE, ELECTRON_MASS
 from .kinematics import vec2, vec3
 from .packets import LGPacket
