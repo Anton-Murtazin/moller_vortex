@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
 
 import numpy as np
 
 from scipy.integrate import quad
-from scipy.special import kve
+from scipy.special import gammaln, k0e, k1e
 
 from .constants import ELECTRON_MASS, PI
 
@@ -16,6 +15,27 @@ from .constants import ELECTRON_MASS, PI
 NORMALIZATION_QUAD_EPSABS = 1.0e-16
 NORMALIZATION_QUAD_EPSREL = 1.0e-10
 NORMALIZATION_QUAD_LIMIT = 150
+
+
+def _scaled_bessel_k_integer(order: int, argument: float) -> float:
+    """Return exp(argument) K_order(argument) for a non-negative integer order."""
+    if order < 0:
+        raise ValueError("Bessel order must be non-negative.")
+    if argument <= 0.0:
+        return np.inf
+    if order == 0:
+        return k0e(argument)
+    if order == 1:
+        return k1e(argument)
+
+    previous = k0e(argument)
+    current = k1e(argument)
+    with np.errstate(over="ignore", invalid="ignore"):
+        for n in range(1, order):
+            previous, current = current, previous + 2.0 * n * current / argument
+            if not np.isfinite(current):
+                return current
+    return current
 
 
 @dataclass(frozen=True)
@@ -39,6 +59,10 @@ class LGPacket:
         Immutable packet parameter container.  The packet is restricted to
         kbar_perp = 0. The normalization constant is not stored in the object;
         compute it explicitly with ``normalization_constant``.
+
+    The on-axis packet used here is normalizable for
+    ``sigma_perp <= sigma_par``. In coordinate coherence lengths this is
+    ``L_perp >= L_par`` because ``sigma = hbar c / L``.
     """
 
     ell: int
@@ -62,8 +86,12 @@ class LGPacket:
             raise TypeError("ell must be an integer.")
         if self.sigma_perp <= 0.0 or self.sigma_par <= 0.0:
             raise ValueError("Packet widths must be positive.")
-        if self.sigma_perp > self.sigma_par:
-            raise ValueError("The normalization integral requires sigma_perp <= sigma_par.")
+        if self.sigma_perp > self.sigma_par * (1.0 + 1.0e-14):
+            raise ValueError(
+                "This on-axis packet is normalizable only for momentum widths "
+                "sigma_perp <= sigma_par. Equivalently, coordinate coherence "
+                "lengths must satisfy L_perp >= L_par."
+            )
         return self
 
 
@@ -111,14 +139,18 @@ def normalization_constant(
     float
         Relativistic normalization constant.
 
-    Stable form for narrow packets.
+    Dimensionless radial form.
 
     The integration variable is
 
-        y = k_perp / sigma_perp.
+        t = (k_perp / sigma_perp)^2.
 
-    This avoids large powers of k_perp and keeps the radial integral in a
-    dimensionless variable.
+    The measure factor is
+
+        y^(2|ell|+1) dy / |ell|! = 0.5 t^|ell| dt / Gamma(|ell|+1),
+
+    so the large factorial is absorbed directly into the exponent of the
+    dimensionless integrand.
     """
     packet = packet.checked()
 
@@ -127,57 +159,75 @@ def normalization_constant(
     sigma_par = packet.sigma_par
 
     radial_coeff = 1.0 - sigma_perp ** 2 / sigma_par ** 2
+    if radial_coeff < 0.0 and radial_coeff > -1.0e-14:
+        radial_coeff = 0.0
+    log_factorial = gammaln(ell_abs + 1)
+    if radial_coeff > 1.0e-3:
+        y_tail = max(12.0, 8.0 * np.sqrt((ell_abs + 1.0) / radial_coeff))
+    else:
+        y_tail = max(
+            12.0,
+            8.0 * np.sqrt(ell_abs + 1.0),
+            (2.0 * ell_abs + 80.0) * sigma_par ** 2 / (m * sigma_perp),
+        )
+    t_upper = y_tail ** 2
 
-    def integrand(y: float) -> float:
-        """Return the dimensionless radial normalization integrand.
+    def log_integrand(t: float) -> float:
+        if t == 0.0:
+            log_power = 0.0 if ell_abs == 0 else -np.inf
+        else:
+            log_power = ell_abs * np.log(t) - log_factorial
+        if not np.isfinite(log_power):
+            return -np.inf
 
-        Parameters
-        ----------
-        y:
-            Dimensionless radial variable ``k_perp / sigma_perp``.
-
-        Returns
-        -------
-        float
-            Integrand value for the one-dimensional normalization integral.
-        """
-        k_perp = sigma_perp * y
+        k_perp = sigma_perp * np.sqrt(t)
         eps_perp = np.sqrt(m ** 2 + k_perp ** 2)
-
         eps_minus_m = k_perp ** 2 / (eps_perp + m)
         bessel_arg = 2.0 * m * eps_perp / sigma_par ** 2
+        bessel_scaled = k0e(bessel_arg)
+
+        if not np.isfinite(bessel_scaled) or bessel_scaled <= 0.0:
+            raise FloatingPointError(
+                "scipy.special.k0e is not finite in the normalization integral."
+            )
 
         exponent = (
-            -radial_coeff * y ** 2
-            -2.0 * m * eps_minus_m / sigma_par ** 2
+            -radial_coeff * t
+            - 2.0 * m * eps_minus_m / sigma_par ** 2
         )
+        return log_power + exponent + np.log(bessel_scaled)
 
-        return (
-            y ** (2 * ell_abs + 1)
-            * np.exp(exponent)
-            * kve(0, bessel_arg)
-        )
+    scale_nodes = np.linspace(0.0, y_tail, 257) ** 2
+    scale_values = np.array([log_integrand(t) for t in scale_nodes])
+    finite_scale_values = scale_values[np.isfinite(scale_values)]
+    if finite_scale_values.size == 0:
+        raise FloatingPointError("The normalization integrand is not finite.")
+    log_scale = finite_scale_values.max()
 
-    integral = quad(
+    def integrand(t: float) -> float:
+        log_value = log_integrand(t) - log_scale
+        if not np.isfinite(log_value) or log_value < -745.0:
+            return 0.0
+        return np.exp(log_value)
+
+    scaled_integral = quad(
         integrand,
         0.0,
-        np.inf,
+        t_upper,
         epsabs=quad_epsabs,
         epsrel=quad_epsrel,
         limit=quad_limit,
     )[0]
 
-    norm_without_N = (
-        sigma_perp ** 2
-        * integral
-        / (
-            4.0
-            * PI ** 2
-            * math.factorial(ell_abs)
-        )
-    )
+    if not np.isfinite(scaled_integral) or scaled_integral <= 0.0:
+        raise FloatingPointError("The normalization integral did not converge.")
 
-    return 1.0 / np.sqrt(norm_without_N)
+    log_norm_without_N = (
+        np.log(sigma_perp ** 2 / (8.0 * PI ** 2))
+        + log_scale
+        + np.log(scaled_integral)
+    )
+    return np.exp(-0.5 * log_norm_without_N)
 
 
 def spherical_normalization_constant(
@@ -206,11 +256,15 @@ def spherical_normalization_constant(
     ell_abs = abs(packet.ell)
     sigma = packet.sigma_perp
     argument = 2.0 * m ** 2 / sigma ** 2
+    bessel_scaled = _scaled_bessel_k_integer(ell_abs + 1, argument)
+
+    if not np.isfinite(bessel_scaled) or bessel_scaled <= 0.0:
+        return normalization_constant(packet, m=m)
 
     return (
         2.0 ** 1.5
         * PI
-        / (sigma * np.sqrt(kve(ell_abs + 1, argument)))
+        / (sigma * np.sqrt(bessel_scaled))
     )
 
 
