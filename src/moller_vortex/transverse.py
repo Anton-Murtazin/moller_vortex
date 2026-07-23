@@ -1,17 +1,12 @@
-"""Closed and direct numerical transverse integrals."""
+"""Closed transverse integrals."""
 
 from __future__ import annotations
 
 import math
 
 import numpy as np
-from .constants import PI, complex_array, real_array
+from .constants import PI, complex_array
 from .kinematics import vec2
-
-
-_TRANSVERSE_QUAD_EPSABS = 1.0e-10
-_TRANSVERSE_QUAD_EPSREL = 1.0e-10
-_TRANSVERSE_QUAD_LIMIT = 30
 
 
 def laguerre_derivative(a: int, b: int, c1: complex, c2: complex, c12: complex) -> complex:
@@ -92,40 +87,7 @@ def laguerre_derivative(a: int, b: int, c1: complex, c2: complex, c12: complex) 
     )
 
 
-def laguerre_derivative_sum(a: int, b: int, c1: complex, c2: complex, c12: complex) -> complex:
-    """Direct finite-sum version of ``laguerre_derivative``.
-
-    Parameters
-    ----------
-    a, b:
-        Non-negative derivative orders.
-    c1, c2, c12:
-        Coefficients in the generating exponential.
-
-    Returns
-    -------
-    complex
-        Direct finite-sum value of the derivative.
-
-    This is useful for diagnostics because it follows immediately from the
-    Taylor expansion of exp(c1*t1 + c2*t2 - c12*t1*t2) and does not use
-    Laguerre polynomials.
-    """
-    if a < 0 or b < 0:
-        raise ValueError("Derivative orders must be non-negative.")
-
-    value = 0.0 + 0.0j
-    for r in range(min(a, b) + 1):
-        coeff = (
-            math.factorial(a)
-            * math.factorial(b)
-            / (math.factorial(a - r) * math.factorial(b - r) * math.factorial(r))
-        )
-        value += coeff * (-c12) ** r * c1 ** (a - r) * c2 ** (b - r)
-    return value
-
-
-def transverse_integral_explicit(
+def transverse_integral(
     ell1: int,
     ell2: int,
     k3_perp,
@@ -134,9 +96,8 @@ def transverse_integral_explicit(
     alpha: complex,
     beta: complex,
     gamma: complex,
-    return_case: bool = False,
-) -> complex | tuple[complex, str]:
-    """Closed first-order transverse integral.
+) -> complex:
+    """Analytic first-order transverse integral.
 
     Parameters
     ----------
@@ -150,13 +111,10 @@ def transverse_integral_explicit(
         Transverse impact parameter.
     alpha, beta, gamma:
         Transverse Gaussian coefficients.
-    return_case:
-        If True, also return the branch name used for the OAM case.
-
     Returns
     -------
-    complex or tuple[complex, str]
-        Analytic transverse integral, optionally with the selected case label.
+    complex
+        Analytic transverse integral.
 
     The integral is evaluated for the first-order expansion
 
@@ -173,7 +131,7 @@ def transverse_integral_explicit(
 
     k3_abs = np.linalg.norm(k3p)
     if k3_abs == 0.0:
-        raise ZeroDivisionError("The expanded transverse denominator requires k3_perp != 0.")
+        raise ZeroDivisionError("The ultrarelativistic transverse denominator requires k3_perp != 0.")
 
     K = complex_array([K_real[0], K_real[1]], shape=(2,))
     b = complex_array([b_real[0], b_real[1]], shape=(2,))
@@ -187,8 +145,8 @@ def transverse_integral_explicit(
     chi_minus = np.exp(1j * phi3) / k3_abs
 
     J0 = (beta + gamma) * K - 1j * b
-    J0_sq = J0[0] * J0[0] + J0[1] * J0[1]
-    K_sq = K[0] * K[0] + K[1] * K[1]
+    J0_sq = J0[0] ** 2 + J0[1] ** 2
+    K_sq = K[0] ** 2 + K[1] ** 2
 
     p_plus = (J0[0] + 1j * J0[1]) / A
     p_minus = (J0[0] - 1j * J0[1]) / A
@@ -205,9 +163,7 @@ def transverse_integral_explicit(
 
     if ell1 == 0 and ell2 == 0:
         bracket = 1.0 + chi_plus * p_plus + chi_minus * p_minus
-        value = prefactor * bracket
-        case = "ell1=0, ell2=0"
-        return (value, case) if return_case else value
+        return prefactor * bracket
 
     if ell1 == 0:
         m = abs(ell2)
@@ -216,15 +172,12 @@ def transverse_integral_explicit(
             bracket = q_plus ** m
             bracket += chi_plus * p_plus * q_plus ** m
             bracket += chi_minus * (p_minus * q_plus ** m - 2.0 * m * q_plus ** (m - 1) / A)
-            case = "ell1=0, ell2>0"
         else:
             bracket = q_minus ** m
             bracket += chi_plus * (p_plus * q_minus ** m - 2.0 * m * q_minus ** (m - 1) / A)
             bracket += chi_minus * p_minus * q_minus ** m
-            case = "ell1=0, ell2<0"
 
-        value = prefactor * bracket
-        return (value, case) if return_case else value
+        return prefactor * bracket
 
     if ell2 == 0:
         n = abs(ell1)
@@ -233,15 +186,12 @@ def transverse_integral_explicit(
             bracket = p_plus ** n
             bracket += chi_plus * p_plus ** (n + 1)
             bracket += chi_minus * (p_minus * p_plus ** n + 2.0 * n * p_plus ** (n - 1) / A)
-            case = "ell1>0, ell2=0"
         else:
             bracket = p_minus ** n
             bracket += chi_plus * (p_plus * p_minus ** n + 2.0 * n * p_minus ** (n - 1) / A)
             bracket += chi_minus * p_minus ** (n + 1)
-            case = "ell1<0, ell2=0"
 
-        value = prefactor * bracket
-        return (value, case) if return_case else value
+        return prefactor * bracket
 
     n = abs(ell1)
     m = abs(ell2)
@@ -254,9 +204,7 @@ def transverse_integral_explicit(
             + 2.0 * n * p_plus ** (n - 1) * q_plus ** m / A
             - 2.0 * m * p_plus ** n * q_plus ** (m - 1) / A
         )
-        value = prefactor * bracket
-        case = "ell1>0, ell2>0"
-        return (value, case) if return_case else value
+        return prefactor * bracket
 
     if ell1 < 0 and ell2 < 0:
         bracket = p_minus ** n * q_minus ** m
@@ -266,9 +214,7 @@ def transverse_integral_explicit(
             - 2.0 * m * p_minus ** n * q_minus ** (m - 1) / A
         )
         bracket += chi_minus * p_minus ** (n + 1) * q_minus ** m
-        value = prefactor * bracket
-        case = "ell1<0, ell2<0"
-        return (value, case) if return_case else value
+        return prefactor * bracket
 
     mu = 2.0 / A
 
@@ -282,9 +228,7 @@ def transverse_integral_explicit(
             K_opposite * laguerre_derivative(n, m, c1, c2, mu)
             - laguerre_derivative(n, m + 1, c1, c2, mu)
         )
-        value = prefactor * bracket
-        case = "ell1>0, ell2<0"
-        return (value, case) if return_case else value
+        return prefactor * bracket
 
     c1 = p_minus
     c2 = q_plus
@@ -295,12 +239,10 @@ def transverse_integral_explicit(
         K_opposite * laguerre_derivative(n, m, c1, c2, mu)
         - laguerre_derivative(n, m + 1, c1, c2, mu)
     )
-    value = prefactor * bracket
-    case = "ell1<0, ell2>0"
-    return (value, case) if return_case else value
+    return prefactor * bracket
 
 
-def transverse_integral_explicit_grid(
+def transverse_integral_grid(
     ell1: int,
     ell2: int,
     k3x,
@@ -311,15 +253,15 @@ def transverse_integral_explicit_grid(
     beta: complex,
     gamma: complex,
 ):
-    """Vectorized closed first-order transverse integral.
+    """Vectorized analytic first-order transverse integral.
 
-    This is the array-valued counterpart of ``transverse_integral_explicit``.
+    This is the array-valued counterpart of ``transverse_integral``.
     It keeps exactly the same branch formulas, but accepts broadcastable
     arrays for the final-particle transverse momentum components.
     """
-    k3_abs_sq = k3x * k3x + k3y * k3y
+    k3_abs_sq = k3x ** 2 + k3y ** 2
     if np.any(k3_abs_sq == 0.0):
-        raise ZeroDivisionError("The expanded transverse denominator requires k3_perp != 0.")
+        raise ZeroDivisionError("The ultrarelativistic transverse denominator requires k3_perp != 0.")
 
     Kx = K_perp[0] + 0.0j
     Ky = K_perp[1] + 0.0j
@@ -335,8 +277,8 @@ def transverse_integral_explicit_grid(
 
     J0x = (beta + gamma) * Kx - 1j * bx
     J0y = (beta + gamma) * Ky - 1j * by
-    J0_sq = J0x * J0x + J0y * J0y
-    K_sq = Kx * Kx + Ky * Ky
+    J0_sq = J0x ** 2 + J0y ** 2
+    K_sq = Kx ** 2 + Ky ** 2
 
     p_plus = (J0x + 1j * J0y) / A
     p_minus = (J0x - 1j * J0y) / A
@@ -439,139 +381,3 @@ def transverse_integral_explicit_grid(
         - laguerre_derivative(n, m + 1, c1, c2, mu)
     )
     return prefactor * bracket
-
-
-def vortex_factor(z: complex, ell: int) -> complex:
-    """Return the Cartesian vortex monomial.
-
-    Parameters
-    ----------
-    z:
-        Complex transverse coordinate ``kx + i ky``.
-    ell:
-        OAM integer.
-
-    Returns
-    -------
-    complex
-        ``z**ell`` for positive OAM, ``conjugate(z)**abs(ell)`` for negative
-        OAM, and ``1`` for zero OAM.
-    """
-    if ell > 0:
-        return z ** ell
-    if ell < 0:
-        return np.conjugate(z) ** abs(ell)
-    return 1.0 + 0.0j
-
-
-def transverse_integral_numeric_quad(
-    ell1: int,
-    ell2: int,
-    k3_perp,
-    K_perp,
-    b_perp,
-    alpha: complex,
-    beta: complex,
-    gamma: complex,
-    n_phi: int = 64,
-) -> complex:
-    """Numerically integrate the first-order transverse integral.
-
-    Parameters
-    ----------
-    ell1, ell2:
-        Incoming packet OAM integers.
-    k3_perp, K_perp, b_perp:
-        Transverse vectors used in the analytic integral.
-    alpha, beta, gamma:
-        Transverse Gaussian coefficients.
-    n_phi:
-        Number of azimuthal trapezoid nodes.
-
-    Returns
-    -------
-    complex
-        Direct polar quadrature value for comparison with
-        ``transverse_integral_explicit``.
-    """
-    from scipy.integrate import quad
-
-    k3p = vec2(k3_perp)
-    Kp = vec2(K_perp)
-    bp = vec2(b_perp)
-
-    k3_abs = np.linalg.norm(k3p)
-    if k3_abs == 0.0:
-        raise ZeroDivisionError("The expanded transverse denominator requires k3_perp != 0.")
-
-    phi3 = np.arctan2(k3p[1], k3p[0])
-    exp_minus_i_phi3 = np.exp(-1j * phi3)
-    exp_plus_i_phi3 = np.exp(1j * phi3)
-
-    phis = np.linspace(0.0, 2.0 * PI, n_phi, endpoint=False)
-    dphi = 2.0 * PI / n_phi
-
-    total = 0.0 + 0.0j
-
-    for phi in phis:
-        cos_phi = np.cos(phi)
-        sin_phi = np.sin(phi)
-
-        def radial_integrand(r: float) -> complex:
-            """Return the radial integrand for one fixed polar angle.
-
-            Parameters
-            ----------
-            r:
-                Transverse radial momentum.
-
-            Returns
-            -------
-            complex
-                Integrand value including the polar measure factor.
-            """
-            k = real_array([r * cos_phi, r * sin_phi], shape=(2,))
-            K_minus_k = Kp - k
-
-            z1 = k[0] + 1j * k[1]
-            z2 = K_minus_k[0] + 1j * K_minus_k[1]
-
-            vortex1 = vortex_factor(z1, ell1)
-            vortex2 = vortex_factor(z2, ell2)
-
-            exponent = (
-                -alpha * np.dot(k, k) / 2.0
-                + beta * np.dot(k, Kp)
-                - gamma * np.dot(K_minus_k, K_minus_k) / 2.0
-                - 1j * np.dot(bp, k)
-            )
-
-            denominator_expansion = (
-                1.0
-                + exp_minus_i_phi3 * z1 / k3_abs
-                + exp_plus_i_phi3 * np.conjugate(z1) / k3_abs
-            ) / k3_abs ** 2
-
-            return r * vortex1 * vortex2 * np.exp(exponent) * denominator_expansion
-
-        real_part = quad(
-            lambda r: np.real(radial_integrand(r)),
-            0.0,
-            np.inf,
-            epsabs=_TRANSVERSE_QUAD_EPSABS,
-            epsrel=_TRANSVERSE_QUAD_EPSREL,
-            limit=_TRANSVERSE_QUAD_LIMIT,
-        )[0]
-
-        imag_part = quad(
-            lambda r: np.imag(radial_integrand(r)),
-            0.0,
-            np.inf,
-            epsabs=_TRANSVERSE_QUAD_EPSABS,
-            epsrel=_TRANSVERSE_QUAD_EPSREL,
-            limit=_TRANSVERSE_QUAD_LIMIT,
-        )[0]
-
-        total += dphi * (real_part + 1j * imag_part)
-
-    return total

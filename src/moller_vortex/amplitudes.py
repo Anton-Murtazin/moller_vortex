@@ -1,65 +1,116 @@
-"""Plane-wave Moller amplitudes in impulse approximation."""
+"""Massive spinor factors used by S_time."""
 
 from __future__ import annotations
 
 import numpy as np
 
-from .constants import ELECTRON_CHARGE, ELECTRON_MASS
-from .kinematics import energy, helicity, kron_delta, vec3
+from .constants import ELECTRON_MASS
+from .kinematics import helicity, kron_delta
 
 
-def moller_amplitude_impulse(
-    k1,
-    k2,
-    k3,
-    k4,
+def massive_ab(
+    E1,
+    E2,
+    E3,
+    E4,
     lam1: float,
     lam2: float,
     lam3: float,
     lam4: float,
     m: float = ELECTRON_MASS,
-    e_charge: float = ELECTRON_CHARGE,
-) -> complex:
-    """Compute the ultrarelativistic paraxial Moller amplitude.
+):
+    """Return the massive paraxial A and B spinor numerators.
 
-    Parameters
-    ----------
-    k1, k2:
-        Incoming plane-wave momenta.
-    k3, k4:
-        Outgoing plane-wave momenta.
-    lam1, lam2, lam3, lam4:
-        Helicity labels.
-    m:
-        Electron mass.
-    e_charge:
-        Electric charge.
-
-    Returns
-    -------
-    complex
-        Plane-wave Moller amplitude in the impulse approximation. Non-
-        helicity-conserving channels return zero.
+    The expression keeps the electron mass in the spinor products and matches
+    the A/B definitions used in the rearranged Moller matrix element.
+    Energies may be scalars or broadcastable NumPy arrays.
     """
-    k1 = vec3(k1)
-    k2 = vec3(k2)
-    k3 = vec3(k3)
-    k4 = vec3(k4)
+    lam1 = helicity(lam1)
+    lam2 = helicity(lam2)
+    lam3 = helicity(lam3)
+    lam4 = helicity(lam4)
 
-    helicity_conserving = kron_delta(helicity(lam3), helicity(lam1)) and kron_delta(
+    E1 = np.asarray(E1)
+    E2 = np.asarray(E2)
+    E3 = np.asarray(E3)
+    E4 = np.asarray(E4)
+
+    E1p = E1 + m
+    E2p = E2 + m
+    E3p = E3 + m
+    E4p = E4 + m
+    E1m = E1 - m
+    E2m = E2 - m
+    E3m = E3 - m
+    E4m = E4 - m
+
+    A = (
+        np.sqrt(E1p * E2p * E3p * E4p)
+        + 4.0 * lam2 * lam4 * np.sqrt(E1p * E2m * E3p * E4m)
+        + 4.0 * lam1 * lam3 * np.sqrt(E1m * E2p * E3m * E4p)
+        + 16.0
+        * lam1
+        * lam2
+        * lam3
+        * lam4
+        * np.sqrt(E1m * E2m * E3m * E4m)
+    )
+    B = (
+        lam3 * lam4 * np.sqrt(E1p * E2p * E3m * E4m)
+        + lam2 * lam3 * np.sqrt(E1p * E2m * E3m * E4p)
+        + lam1 * lam4 * np.sqrt(E1m * E2p * E3p * E4m)
+        + lam1 * lam2 * np.sqrt(E1m * E2m * E3p * E4p)
+    )
+    return A, B
+
+
+def _helicity_direct(lam1: float, lam2: float, lam3: float, lam4: float) -> int:
+    """Return the direct paraxial spinor-overlap Kronecker product."""
+    return kron_delta(helicity(lam3), helicity(lam1)) * kron_delta(
         helicity(lam4), helicity(lam2)
     )
-    if not helicity_conserving:
-        return 0.0 + 0.0j
 
-    q_perp = k3[:2] - k1[:2]
-    q_perp_sq = np.dot(q_perp, q_perp)
-    if q_perp_sq == 0.0:
-        raise ZeroDivisionError("Impulse transverse denominator is exactly zero.")
 
-    E1 = energy(k1, m)
-    E2 = energy(k2, m)
-    E3 = energy(k3, m)
-    E4 = energy(k4, m)
+def _helicity_exchange(lam1: float, lam2: float, lam3: float, lam4: float) -> float:
+    """Return the exchange paraxial spinor-overlap factor."""
+    lam1 = helicity(lam1)
+    lam2 = helicity(lam2)
+    lam3 = helicity(lam3)
+    lam4 = helicity(lam4)
+    return (
+        (2.0 * lam2)
+        * (2.0 * lam4)
+        * kron_delta(lam3, -lam2)
+        * kron_delta(lam4, -lam1)
+    )
 
-    return -8.0 * e_charge ** 2 * np.sqrt(E1 * E2 * E3 * E4) / q_perp_sq
+
+def massive_spinor_scale(
+    E1,
+    E2,
+    E3,
+    E4,
+    lam1: float,
+    lam2: float,
+    lam3: float,
+    lam4: float,
+    m: float = ELECTRON_MASS,
+):
+    """Return the massive t-channel numerator relative to the ultrarelativistic one.
+
+    This helper returns the spinor numerator ratio
+
+        [(A + 4B) direct - 8B exchange] / [8 sqrt(E1 E2 E3 E4)].
+
+    It does not include any denominator.  The packet S-matrix uses the same
+    algebra with the invariant denominator inside the massive S_time integrand.
+    """
+    direct = _helicity_direct(lam1, lam2, lam3, lam4)
+    exchange = _helicity_exchange(lam1, lam2, lam3, lam4)
+    if direct == 0 and exchange == 0:
+        return 0.0
+
+    A, B = massive_ab(E1, E2, E3, E4, lam1, lam2, lam3, lam4, m=m)
+    numerator = (A + 4.0 * B) * direct - 8.0 * B * exchange
+    old_numerator = 8.0 * np.sqrt(E1 * E2 * E3 * E4)
+    return numerator / old_numerator
