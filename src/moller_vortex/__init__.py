@@ -1,4 +1,4 @@
-"""Numerical Moller scattering of Lorentz-covariant vortex packets."""
+"""Moller scattering of Lorentz-covariant vortex packets."""
 
 from .config import (
     ALPHA_EM,
@@ -11,20 +11,18 @@ from .config import (
     Axis,
     NormalizationGrid,
     ProbabilityGrid,
-    ScatteringGrid,
     VortexPacket,
     spatial_width_nm_to_momentum_mev,
 )
 from .probability import (
     differential_probability,
     differential_probability_grid,
-    longitudinal_density,
-    longitudinal_density_grid,
     mean_total_momentum,
     total_probability,
 )
 from .scattering import longitudinal_factor, s_matrix, transverse_integral
 from .states import (
+    approximation_parameters,
     central_energy,
     effective_sigma,
     energy,
@@ -43,15 +41,13 @@ __all__ = [
     "Axis",
     "NormalizationGrid",
     "ProbabilityGrid",
-    "ScatteringGrid",
     "VortexPacket",
+    "approximation_parameters",
     "central_energy",
     "differential_probability",
     "differential_probability_grid",
     "effective_sigma",
     "energy",
-    "longitudinal_density",
-    "longitudinal_density_grid",
     "longitudinal_factor",
     "mean_total_momentum",
     "normalization",
