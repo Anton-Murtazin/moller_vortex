@@ -30,4 +30,5 @@ Thumbs.db
 # Local data / generated outputs
 outputs/
 data/
+tmp/
 *.log

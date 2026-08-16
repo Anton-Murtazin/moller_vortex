@@ -1,205 +1,95 @@
 # moller-vortex
 
-Self-contained research code for numerical analysis of Moller scattering of on-axis vortex wave packets.
+Compact NumPy implementation of Lorentz-covariant vortex packets and the
+paraxial ultrarelativistic impulse S-matrix from
+`QED_with_vortex_packets-2.pdf`.
 
-The project is written in natural units:
+Natural units are used: `hbar = c = 1`. Masses, energies, momenta, and packet
+widths are in MeV; impact parameters are in `MeV^-1`.
 
-$$
-\hbar = c = 1.
-$$
+## Scope
 
-Energies, masses and momenta are measured in MeV. Impact parameters are measured in
+The implementation contains the formulas needed for:
 
-$$
-\mathrm{MeV}^{-1}.
-$$
+- the vortex state, Eqs. (4) and (14)-(16);
+- two-dimensional normalization, Eqs. (17)-(18);
+- the longitudinal impulse factor, Eq. (28);
+- the closed transverse integrals, Eqs. (32), (46), and (56);
+- the S-matrix, Eq. (31);
+- differential probability and the mean total momentum.
 
-## Installation for local work
-
-From the project root:
-
-```bash
-python -m pip install -e .[dev]
-```
-
-The `-e` flag installs the project in editable mode: after editing files in `src/moller_vortex/`, the changes are visible without reinstalling.
-After installation, notebooks and scripts should import the project directly:
-
-```python
-import moller_vortex as mv
-```
-
-
-## Main working file
-
-For calculations, scans and plots, open:
+The probability functions use
 
 ```text
-analysis_workspace.ipynb
+dP/d^2K_perp = integral d^3k3/[(2pi)^3 2E3]
+                        d^3k4/[(2pi)^3 2E4]
+                        delta^2(K_perp-k3_perp-k4_perp) |S_fi|^2.
 ```
-
-The notebook imports:
-
-```python
-import moller_vortex as mv
-```
-
-so project functions are used as `mv.function_name(...)`. This keeps the
-notebook namespace explicit and easier to inspect.
-
-## Minimal workflow
-
-```python
-import numpy as np
-import moller_vortex as mv
-
-packet1 = mv.LGPacket(ell=1, sigma_perp=0.18, sigma_par=0.35, kbar_z=20.0)
-packet2 = mv.LGPacket(ell=-1, sigma_perp=0.18, sigma_par=0.35, kbar_z=-20.0)
-
-N1 = mv.normalization_constant(packet1)
-N2 = mv.normalization_constant(packet2)
-
-k3 = mv.vec3([0.8, 0.10, 19.7])
-k4 = mv.vec3([-0.55, -0.08, -19.6])
-impact_b = mv.vec2([0.3, 0.0])
-
-S = mv.S_impulse_closed_form(
-    k3,
-    k4,
-    packet1,
-    packet2,
-    lam1=0.5,
-    lam2=0.5,
-    lam3=0.5,
-    lam4=0.5,
-    impact_b=impact_b,
-    N1=N1,
-    N2=N2,
-)
-```
-
-For a one-off calculation, `N1` and `N2` may be omitted; the S-matrix functions will compute them internally. For scans, compute them explicitly and reuse them.
-
-## Central numerical settings
-
-The standard normalization call uses the built-in adaptive `quad` settings:
-
-```python
-N = mv.normalization_constant(packet)
-```
-
-The S-matrix and probability routines do not accept a shared tolerance object.
-For scans, compute `N1` and `N2` explicitly once and pass them into the
-S-matrix/probability functions. If `N1` or `N2` is omitted, the package computes
-the missing normalization with the standard settings. If one particular
-normalization check needs different adaptive tolerances, pass `quad_epsabs`,
-`quad_epsrel`, or `quad_limit` directly in that `normalization_constant(...)`
-call.
-
-Use `ProbabilityQuadrature` / `ExactTimeQuadrature` for deterministic node
-counts and integration ranges.
-
-The quadrature dataclasses only store settings. Nodes and weights are built by:
-
-```python
-mv.probability_inner_nodes(quadrature)
-mv.probability_outer_nodes(quadrature)
-mv.exact_time_nodes(exact_quad)  # chi
-mv.exact_time_nodes(exact_quad, radial_interval=(kappa_min, kappa_max))  # kappa
-```
-
-For `S_exact_time`, choose the radial formula with
-`ExactTimeQuadrature(radial_variable="kappa")` or
-`ExactTimeQuadrature(radial_variable="chi")`.  The direct kappa formula uses
-`n_kappa/kappa_method` and passes its physical radial interval into
-`exact_time_nodes` in the scalar diagnostic path. The vectorized batch path maps
-per-point kappa intervals from unit nodes internally. The chi formula uses
-`n_chi/chi_method`.
-
-For probability integrals the finite-axis defaults are composite Boole, so use node counts of the form `n = 4*m + 1`, for example `9`, `17`, or `25`. Periodic angular axes use endpoint-free trapezoid quadrature by default.
-
-Long grid-style probability routines accept `progress=True` to print completed
-points, total points, percent and elapsed time while the calculation runs.
-
-## Built-in numerical checks
-
-The project does not use a separate pytest-style test folder. Numerical checks
-are ordinary functions inside the package and can be called directly from a
-notebook or script. They do not decide whether a test has "passed" or "failed";
-they only print and return the numerical errors.
-
-```python
-results = mv.run_all_checks(
-    n_phi=16,
-    verbose=True,
-)
-```
-
-Individual checks are also available:
-
-```python
-mv.check_normalization()
-mv.check_laguerre_derivative()
-mv.check_transverse_integral(n_phi=16)
-mv.check_vectorized_paths()
-mv.check_smatrix(n_phi=16)
-```
-
-The returned dictionaries contain raw relative errors. The interpretation of those errors is left to the analysis notebook. The checks compare:
-
-1. normalization in the spherical limit
-
-$$
-\sigma_\perp = \sigma_\parallel
-$$
-
-against the closed Bessel-K expression;
-2. the Laguerre-derivative formula against the direct finite sum;
-3. analytic transverse expressions against direct numerical polar integration;
-4. vectorized S-matrix/probability paths against scalar diagnostic paths;
-5. closed impulse
-
-$$
-S
-$$
-
-matrix against the same formula with numerical transverse integration.
 
 ## Structure
 
 ```text
 src/moller_vortex/
-  constants.py     units, dtypes, electron mass and charge
-  kinematics.py    vector checks, energies, helicity labels
-  packets.py       LGPacket and normalization constants
-  amplitudes.py    impulse Moller amplitude
-  transverse.py    analytic and direct numerical transverse integrals
-  smatrix.py       closed, first-order, exact-time and numerical-check S-matrix routines
-  checks.py        ordinary check functions for notebooks and scripts
-  probability.py   numerical integration of the squared modulus of S matrix related to the transverse total momentum
-  quadrature.py    deterministic quadrature rules and central quadrature dataclasses
-
-notebooks/
-  usage_example.ipynb
-
-analysis_workspace.ipynb  main Jupyter workspace for exploratory work
+  config.py       constants and calculation parameter dataclasses
+  numerics.py     Boole quadrature, vector operations, parallel mapping
+  states.py       vortex state and two-dimensional normalization
+  scattering.py   longitudinal/transverse factors and S-matrix
+  probability.py  differential probability and mean total momentum
+moller_vortex.ipynb
 ```
 
-## Main documentation
+## Installation
 
-The central reference is:
-
-```text
-docs/FUNCTION_GUIDE.md
+```powershell
+python -m pip install -e ".[notebook]"
 ```
 
-It describes the physical role of the main functions, their implementation, expected inputs and outputs, typical usage patterns for scans, and the built-in check functions.
+The calculation core depends only on NumPy.
 
-## Input and output conventions
+## Quadrature axes
 
-- transverse vectors are array-like objects with shape `(2,)`;
-- three-momenta are array-like objects with shape `(3,)`;
-- helicities must be exactly `+0.5` or `-0.5`;
-- `LGPacket` stores only physical parameters and does not store a normalization constant;
-- compute `N = normalization_constant(packet)` explicitly and pass it to repeated scans;
-- the impact parameter belongs to the second incoming packet and is passed to S-matrix functions as `impact_b`.
+Every finite integration domain is represented by
+`Axis(start, stop, points, rule)`. The available rules are `"boole"`,
+`"gauss"`, `"trapezoid"`, and `"periodic"`. The default is composite
+five-point Boole, for which `points` must be `4 * n + 1`. The `"periodic"`
+option is the endpoint-free trapezoidal rule used for azimuthal angles.
+
+## Minimal use
+
+```python
+import numpy as np
+import moller_vortex as mv
+
+normalization_grid_1 = mv.NormalizationGrid(
+    k_perp=mv.Axis(0.0, 0.002, 65),
+    k_z=mv.Axis(9.5, 10.5, 97),
+)
+normalization_grid_2 = mv.NormalizationGrid(
+    k_perp=normalization_grid_1.k_perp,
+    k_z=mv.Axis(-10.5, -9.5, 97),
+)
+packet1 = mv.VortexPacket(
+    ell=1,
+    sigma_perp=2.0e-4,
+    sigma_parallel=0.05,
+    sigma_energy=0.05,
+    k0_z=10.0,
+    normalization_grid=normalization_grid_1,
+)
+packet2 = mv.VortexPacket(
+    ell=-1,
+    sigma_perp=2.0e-4,
+    sigma_parallel=0.05,
+    sigma_energy=0.05,
+    k0_z=-10.0,
+    normalization_grid=normalization_grid_2,
+)
+
+momentum_3 = np.array((0.02, 0.0, 10.0))
+momentum_4 = np.array((-0.0198, 0.0, -10.0))
+S = mv.s_matrix(momentum_3, momentum_4, packet1, packet2)
+```
+
+Independent points of a probability map or outer momentum integral can be
+evaluated with `workers=N`. Inner integrals are vectorized and processed in
+memory-controlled batches.
