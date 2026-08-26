@@ -46,7 +46,11 @@ def central_energy(packet: VortexPacket) -> np.floating:
 
 
 def effective_sigma(packet: VortexPacket) -> np.floating:
-    """Return the effective longitudinal width from PDF Eq. (27)."""
+    """Return the width of the product of the two longitudinal Gaussians.
+
+    This is a derived momentum-space width.  It does not replace either
+    ``sigma_parallel`` or ``sigma_energy`` supplied by the user.
+    """
     velocity = packet.k0_z / central_energy(packet)
     inverse_variance = (
         1.0 / packet.sigma_parallel**2
@@ -72,7 +76,7 @@ def wave_packet(
     *,
     impact=(0.0, 0.0),
 ):
-    """Evaluate the reference-frame state in PDF Eqs. (4) and (16)."""
+    """Evaluate the user-specified reference-frame vortex state."""
     momentum = vector(momentum, 3, "momentum")
     impact = np.asarray(impact, dtype=momentum.dtype)
     if impact.shape != (2,):
@@ -100,7 +104,7 @@ def wave_packet(
 
 
 def _normalization(packet: VortexPacket) -> np.floating:
-    """Compute the normalization using the expanded formula from the paper."""
+    """Compute the normalization using the stable unexpanded exponent."""
     k_perp_nodes, k_perp_weights = (
         packet.normalization_grid.k_perp.nodes_weights()
     )
@@ -111,28 +115,15 @@ def _normalization(packet: VortexPacket) -> np.floating:
     central_energy_value = central_energy(packet)
     ell_abs = abs(packet.ell)
 
-    outside_exponent = (
-        (ELECTRON_MASS**2 + central_energy_value**2)
-        / packet.sigma_energy**2
-        + packet.k0_z**2 / packet.sigma_parallel**2
+    exponent = (
+        -(energy_value - central_energy_value) ** 2 / packet.sigma_energy**2
+        - k_perp**2 / packet.sigma_perp**2
+        - (k_z - packet.k0_z) ** 2 / packet.sigma_parallel**2
     )
-    integral_exponent = (
-        -(1.0 / packet.sigma_energy**2 + 1.0 / packet.sigma_perp**2)
-        * k_perp**2
-        -(1.0 / packet.sigma_energy**2 + 1.0 / packet.sigma_parallel**2)
-        * k_z**2
-        + 2.0
-        * central_energy_value
-        * energy_value
-        / packet.sigma_energy**2
-        + 2.0 * packet.k0_z * k_z / packet.sigma_parallel**2
-    )
-
-    # exp(outside_exponent) is moved under the integral to avoid inf / inf.
     integrand = (
         k_perp ** (2 * ell_abs + 1)
         / (2.0 * energy_value)
-        * np.exp(integral_exponent - outside_exponent)
+        * np.exp(exponent)
     )
     integral_over_k_z = np.sum(k_z_weights * integrand, axis=1)
     integral = np.sum(k_perp_weights * integral_over_k_z)

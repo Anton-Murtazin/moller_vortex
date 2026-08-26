@@ -36,11 +36,8 @@ class ProbabilityGrid:
 
     k3_perp: Axis
     k3_phi: Axis
-    k3_z: Axis
-    k4_z: Axis
     total_k_perp: Axis | None = None
     total_k_phi: Axis | None = None
-    batch_size: int = 64
 
 
 def spatial_width_nm_to_momentum_mev(width_nm: float) -> np.floating:

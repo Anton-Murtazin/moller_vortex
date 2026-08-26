@@ -1,9 +1,8 @@
-"""Reusable quadrature, vector, and parallel-execution helpers."""
+"""Reusable quadrature, vector, and sequential progress helpers."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Iterable, Sized
 from dataclasses import dataclass
 from typing import Literal, TypeVar
 
@@ -98,13 +97,34 @@ def transverse_projection(values, sign: int):
     return values[..., 0] + 1j * sign * values[..., 1]
 
 
-def independent_map(
+def sequential_map(
     function: Callable[[Input], Result],
     values: Iterable[Input],
-    workers: int,
+    *,
+    progress: bool = False,
+    description: str | None = None,
 ) -> list[Result]:
-    """Evaluate independent values in input order, serially or in threads."""
-    if workers == 1:
-        return [function(value) for value in values]
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        return list(executor.map(function, values))
+    """Evaluate values sequentially, optionally displaying progress."""
+    total = len(values) if isinstance(values, Sized) else None
+    progress_bar = None
+    if progress:
+        try:
+            from tqdm.auto import tqdm as progress_bar
+        except ImportError as error:
+            raise ImportError(
+                "Progress display requires the 'notebook' optional dependencies. "
+                "Install them with: pip install -e '.[notebook]'"
+            ) from error
+
+    def with_progress(iterable):
+        if not progress:
+            return iterable
+        return progress_bar(
+            iterable,
+            total=total,
+            desc=description,
+            unit="point",
+            dynamic_ncols=True,
+        )
+
+    return [function(value) for value in with_progress(values)]

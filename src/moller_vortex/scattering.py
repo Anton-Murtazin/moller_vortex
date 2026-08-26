@@ -1,4 +1,4 @@
-"""Analytic paraxial ultrarelativistic S-matrix from PDF Eqs. (28)-(56)."""
+"""Analytic paraxial ultrarelativistic impulse S-matrix."""
 
 from __future__ import annotations
 
@@ -18,11 +18,11 @@ from .numerics import (
     transverse_projection,
     vector,
 )
-from .states import VortexPacket, central_energy
+from .states import VortexPacket, central_energy, effective_sigma
 
 
 def _mixed_polynomial(m: int, n: int, c1, c2, c12: float):
-    """Return F_mn from PDF Eq. (53)."""
+    """Return the finite mixed polynomial in the Gaussian convolution."""
     result = c1**m * c2**n
     for r in range(1, min(m, n) + 1):
         coefficient = math.comb(m, r) * math.comb(n, r) * math.factorial(r)
@@ -41,7 +41,7 @@ def longitudinal_factor(
     packet1: VortexPacket,
     packet2: VortexPacket,
 ):
-    """Evaluate the separated longitudinal factor L in PDF Eq. (28)."""
+    """Evaluate the separated longitudinal impulse factor ``L``."""
     momentum_3 = vector(momentum_3, 3, "momentum_3")
     momentum_4 = vector(momentum_4, 3, "momentum_4")
     k3_z = momentum_3[..., 2]
@@ -93,6 +93,34 @@ def _longitudinal_from_energies(
     )
 
 
+def _integrated_longitudinal_squared(
+    packet1: VortexPacket,
+    packet2: VortexPacket,
+) -> np.floating:
+    """Integrate ``|L|^2`` over both final longitudinal momenta.
+
+    The same paraxial expansion that produces ``L`` makes its two Gaussian
+    directions independent after shifting them to the final mass shell.  On
+    the full longitudinal domain their squared integral is therefore
+
+        4 pi^3 sigma_eff,1 sigma_eff,2 / (v1 - v2)^2.
+
+    The mass-shell shifts change the Gaussian centers but not this integral.
+    """
+    velocity_1 = packet1.k0_z / central_energy(packet1)
+    velocity_2 = packet2.k0_z / central_energy(packet2)
+    delta_velocity = velocity_1 - velocity_2
+    if np.abs(delta_velocity) <= np.finfo(REAL_DTYPE).eps:
+        raise ValueError("The two packet velocities must differ.")
+    return REAL_DTYPE(
+        4.0
+        * PI**3
+        * effective_sigma(packet1)
+        * effective_sigma(packet2)
+        / delta_velocity**2
+    )
+
+
 def transverse_integral(
     k3_perp,
     total_k_perp,
@@ -101,7 +129,7 @@ def transverse_integral(
     *,
     impact=(0.0, 0.0),
 ):
-    """Evaluate the closed transverse integral in PDF Eqs. (46) and (56)."""
+    """Evaluate the closed first-order transverse convolution."""
     k3_perp = vector(k3_perp, 2, "k3_perp")
     total_k_perp = vector(total_k_perp, 2, "total_k_perp")
     impact = np.asarray(impact, dtype=REAL_DTYPE)
@@ -110,7 +138,9 @@ def transverse_integral(
 
     k3_perp_squared = scalar_product(k3_perp, k3_perp)
     if np.any(k3_perp_squared <= 0.0):
-        raise ZeroDivisionError("PDF Eq. (32) requires nonzero k3_perp.")
+        raise ZeroDivisionError(
+            "The first-order propagator expansion requires nonzero k3_perp."
+        )
 
     sigma_1_squared = packet1.sigma_perp**2
     sigma_2_squared = packet2.sigma_perp**2
@@ -237,7 +267,7 @@ def s_matrix(
     impact=(0.0, 0.0),
     helicities=(0.5, -0.5, 0.5, -0.5),
 ):
-    """Compute the S-matrix in PDF Eq. (31)."""
+    """Compute the paraxial helicity-conserving impulse S-matrix."""
     momentum_3 = vector(momentum_3, 3, "momentum_3")
     momentum_4 = vector(momentum_4, 3, "momentum_4")
     initial_1, initial_2, final_3, final_4 = helicities

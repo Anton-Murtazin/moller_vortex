@@ -1,22 +1,26 @@
 # moller-vortex
 
-Compact NumPy implementation of Lorentz-covariant vortex packets and the
-paraxial ultrarelativistic impulse S-matrix from
-`QED_with_vortex_packets-2.pdf`.
+Compact NumPy implementation of the vortex packets defined in the notebook
+and a paraxial ultrarelativistic impulse model for Moller scattering.
 
 Natural units are used: `hbar = c = 1`. Masses, energies, momenta, and packet
 widths are in MeV; impact parameters are in `MeV^-1`.
 
 ## Scope
 
-The implementation contains the formulas needed for:
+The implementation contains:
 
-- the vortex state, Eqs. (4) and (14)-(16);
-- two-dimensional normalization, Eqs. (17)-(18);
-- the longitudinal impulse factor, Eq. (28);
-- the closed transverse integrals, Eqs. (32), (46), and (56);
-- the S-matrix, Eq. (31);
+- the user-specified Gaussian vortex state and its relativistic normalization;
+- the forward, helicity-conserving ultrarelativistic Moller amplitude;
+- the separated longitudinal impulse factor;
+- the closed first-order transverse propagator convolution;
+- analytic integration over the two final longitudinal momenta;
 - differential probability and the mean total momentum.
+
+The packet ansatz used here has separate negative Gaussian factors in energy
+and longitudinal momentum. It is therefore the model specified in the
+notebook, rather than a literal transcription of every packet formula in the
+reference PDF.
 
 The probability functions use
 
@@ -26,12 +30,14 @@ dP/d^2K_perp = integral d^3k3/[(2pi)^3 2E3]
                         delta^2(K_perp-k3_perp-k4_perp) |S_fi|^2.
 ```
 
+With momenta expressed in MeV, `dP/d^2K_perp` is returned in `MeV^-2`.
+
 ## Structure
 
 ```text
 src/moller_vortex/
   config.py       constants and calculation parameter dataclasses
-  numerics.py     Boole quadrature, vector operations, parallel mapping
+  numerics.py     quadrature, vector operations, and progress helpers
   states.py       vortex state and two-dimensional normalization
   scattering.py   longitudinal/transverse factors and S-matrix
   probability.py  differential probability and mean total momentum
@@ -90,6 +96,9 @@ momentum_4 = np.array((-0.0198, 0.0, -10.0))
 S = mv.s_matrix(momentum_3, momentum_4, packet1, packet2)
 ```
 
-Independent points of a probability map or outer momentum integral can be
-evaluated with `workers=N`. Inner integrals are vectorized and processed in
-memory-controlled batches.
+Probability maps and outer momentum integrals are evaluated sequentially;
+their remaining transverse integration arrays are vectorized. The two final
+longitudinal momenta are integrated analytically in the same paraxial
+approximation used to derive the impulse S-matrix. Pass `progress=True` to
+`differential_probability_grid`, `total_probability`, or
+`mean_total_momentum` to display progress in a notebook or terminal.
